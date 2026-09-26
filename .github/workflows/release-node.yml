@@ -29,6 +29,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm publish --workspace @spacexr/3d-tiles-core --access public --provenance
+      - run: npm publish --workspace @spacexr/3d-tiles-runtime --access public --provenance
 
       - name: Dump npm debug logs on failure
         if: failure()
@@ -43,4 +44,3 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-

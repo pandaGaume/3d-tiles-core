@@ -12,6 +12,7 @@ The repository is organized by target language so the same contracts can later b
 
 ```text
 node/packages/core/  TypeScript interfaces, codecs and validation
+node/packages/runtime/ Renderer-neutral traversal, loading and presentation lifecycle
 conformance/         Shared positive and negative conformance fixtures
 dotnet/              Reserved for the future .NET implementation
 cpp/                 Reserved for the future C++ and Unreal implementation
@@ -19,7 +20,9 @@ docs/                Cross-language architecture and compatibility rules
 assets/brand/         Project logo and icon
 ```
 
-The first deliverable deliberately excludes rendering and streaming state. It contains the serializable 3D Tiles 1.1 model, JSON codecs, structural validation and conformance-oriented tests.
+The core package deliberately excludes rendering and streaming state. The runtime package builds mutable traversal nodes around those immutable contracts and delegates every host-specific operation to an adaptation layer.
+
+Ellipsoid, geodetic, ECEF and local tangent frame mathematics live in the independent [`@spacexr/geodesy`](https://github.com/pandaGaume/geodesy_ts) package. The runtime consumes that numerical foundation through `EcefSpatialMetric` and keeps 3D Tiles-specific visibility and level-of-detail policy in this repository.
 
 ## Node.js development
 
@@ -29,11 +32,27 @@ npm ci
 npm run check
 ```
 
-The published package is planned as `@spacexr/3d-tiles-core` under the `pandaGaume` GitHub organization.
+The Node workspace publishes `@spacexr/3d-tiles-core` and `@spacexr/3d-tiles-runtime` under the `pandaGaume` GitHub organization.
 
 ## Architectural rule
 
-Serialized 3D Tiles documents are immutable data contracts. A future runtime may build mutable runtime nodes from them, but it must not add execution state to the serialized interfaces.
+Serialized 3D Tiles documents are immutable data contracts. The runtime builds separate mutable nodes and never adds execution state to the serialized interfaces.
+
+The runtime exposes interfaces for:
+
+- tileset and external metadata schema loading;
+- standard implicit subtree loading and sparse availability;
+- XYZ or TMS Web Map and DEM pyramid adaptation;
+- renderer-specific glTF loading and presentation;
+- renderer-specific terrain grid instancing and shaders;
+- camera placement events;
+- spatial visibility and screen-space-error metrics;
+- bounded LRU caching for renderables, subtree payloads and implicit branches;
+- glyph, label and anchor publication;
+- optional real-time statistics and operational telemetry;
+- lifecycle hooks for additional application processing.
+
+See [Runtime architecture](docs/runtime-architecture.md) for the complete separation of responsibilities.
 
 ## Brand assets
 

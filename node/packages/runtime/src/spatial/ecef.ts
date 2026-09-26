@@ -1,0 +1,138 @@
+import { GeodeticSystem } from "@spacexr/geodesy";
+
+import type { IScreenSpaceErrorContext, ISpatialDerivationContext, ISpatialMetric } from "../ports/spatial";
+import {
+    boundsFromBox,
+    boundsFromRegion,
+    boundsFromSphere,
+    boxesIntersect,
+    isSphereBelowConservativeHorizon,
+    sphereOutsidePlane,
+} from "./bounding-volumes";
+import type { IEcefCameraFrame, IEcefSpatialMetricOptions, IEcefSpatialState } from "./ecef-types";
+import { matrixOf, maximumScale, multiplyTransforms, vectorLength } from "./matrix";
+
+const DEFAULT_VIEWPORT_HEIGHT = 1080;
+const DEFAULT_VERTICAL_FOV_RADIANS = Math.PI / 3;
+
+/**
+ * Renderer-neutral 3D Tiles spatial metric operating in ECEF metres.
+ *
+ * The class owns 3D Tiles concerns such as transform composition, bounding
+ * volume derivation, visibility and screen-space error. Ellipsoid and
+ * coordinate-system mathematics are delegated to `@spacexr/geodesy`.
+ */
+export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcefSpatialState> {
+    private readonly system: GeodeticSystem;
+    private readonly horizonCulling: boolean;
+    private readonly defaultViewportHeight: number;
+    private readonly defaultVerticalFovRadians: number;
+
+    /**
+     * Creates an ECEF spatial metric.
+     *
+     * @param options - Geodetic system and camera fallbacks.
+     */
+    public constructor(options: IEcefSpatialMetricOptions = {}) {
+        this.system = options.geodeticSystem ?? GeodeticSystem.WGS84;
+        this.horizonCulling = options.horizonCulling ?? true;
+        this.defaultViewportHeight = options.defaultViewportHeight ?? DEFAULT_VIEWPORT_HEIGHT;
+        this.defaultVerticalFovRadians = options.defaultVerticalFovRadians ?? DEFAULT_VERTICAL_FOV_RADIANS;
+
+        if (!Number.isFinite(this.defaultViewportHeight) || this.defaultViewportHeight <= 0) {
+            throw new RangeError("The default viewport height must be a positive finite number.");
+        }
+        if (
+            !Number.isFinite(this.defaultVerticalFovRadians) ||
+            this.defaultVerticalFovRadians <= 0 ||
+            this.defaultVerticalFovRadians >= Math.PI
+        ) {
+            throw new RangeError("The default vertical field of view must be in the interval (0, PI).");
+        }
+    }
+
+    /** Geodetic reference system used for regions and horizon culling. */
+    public get geodeticSystem(): GeodeticSystem {
+        return this.system;
+    }
+
+    /**
+     * Derives world-space state for a tile.
+     *
+     * Box and sphere volumes receive the accumulated tile transform. A region
+     * is already expressed in the tileset geodetic reference system and is not
+     * transformed, as required by 3D Tiles.
+     *
+     * @param context - Source tile and optional parent spatial state.
+     * @returns Spatial state expressed in ECEF metres.
+     */
+    public derive(context: ISpatialDerivationContext<IEcefSpatialState>): IEcefSpatialState {
+        const localTransform = matrixOf(context.tile.transform);
+        const worldTransform = context.parent ? multiplyTransforms(context.parent.worldTransform, localTransform) : localTransform;
+        const scale = maximumScale(worldTransform);
+        const volume = context.tile.boundingVolume;
+        const bounds = volume.box
+            ? boundsFromBox(volume.box, worldTransform)
+            : volume.sphere
+              ? boundsFromSphere(volume.sphere, worldTransform)
+              : volume.region
+                ? boundsFromRegion(volume.region, this.system)
+                : {};
+
+        return {
+            worldTransform,
+            ...bounds,
+            geometricError: context.tile.geometricError * scale,
+        };
+    }
+
+    /**
+     * Evaluates coarse clip bounds, conservative horizon culling and frustum planes.
+     *
+     * @param spatial - Derived tile state.
+     * @param camera - Camera expressed in ECEF metres.
+     * @returns `true` when the tile may contribute to the current view.
+     */
+    public isVisible(spatial: IEcefSpatialState, camera: IEcefCameraFrame): boolean {
+        if (camera.clipBounds && spatial.boundingBox && !boxesIntersect(spatial.boundingBox, camera.clipBounds)) return false;
+        if (!spatial.boundingSphere) return true;
+        if (
+            this.horizonCulling &&
+            isSphereBelowConservativeHorizon(spatial.boundingSphere, camera.position, this.system.ellipsoid.minimumRadius)
+        ) {
+            return false;
+        }
+        if (camera.frustumPlanes?.some((plane) => sphereOutsidePlane(spatial.boundingSphere!, plane))) return false;
+        return true;
+    }
+
+    /**
+     * Computes projected geometric error in physical pixels.
+     *
+     * Distance is measured from the camera to the enclosing sphere surface,
+     * not merely to its centre. This prevents premature refinement changes
+     * near large tiles.
+     *
+     * @param context - Camera, tile and derived spatial state.
+     * @returns Screen-space error in physical pixels.
+     */
+    public screenSpaceError(context: IScreenSpaceErrorContext<IEcefCameraFrame, IEcefSpatialState>): number {
+        if (context.spatial.geometricError <= 0) return 0;
+        const camera = context.camera;
+        const sphere = context.spatial.boundingSphere;
+        const distance = sphere
+            ? Math.max(
+                  vectorLength({
+                      x: camera.position.x - sphere.center.x,
+                      y: camera.position.y - sphere.center.y,
+                      z: camera.position.z - sphere.center.z,
+                  }) - sphere.radius,
+                  Number.EPSILON,
+              )
+            : Math.max(vectorLength(camera.position), Number.EPSILON);
+        const viewportHeight = camera.viewportHeight > 0 ? camera.viewportHeight : this.defaultViewportHeight;
+        const tanHalfVerticalFov = camera.tanHalfVerticalFov ?? Math.tan((camera.verticalFovRadians ?? this.defaultVerticalFovRadians) / 2);
+        if (!Number.isFinite(tanHalfVerticalFov) || tanHalfVerticalFov <= 0) return Number.POSITIVE_INFINITY;
+        return (context.spatial.geometricError * viewportHeight) / (2 * tanHalfVerticalFov * distance);
+    }
+}

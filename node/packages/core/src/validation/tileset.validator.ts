@@ -1,5 +1,5 @@
-import type { BoundingVolume, MetadataEntity, Tile, Tileset } from "../model";
-import type { Diagnostic, ValidationResult } from "./diagnostic";
+import type { IBoundingVolume, IMetadataEntity, ITile, ITileset } from "../model";
+import type { IDiagnostic, IValidationResult } from "./diagnostic";
 
 type RecordValue = Record<string, unknown>;
 
@@ -7,23 +7,23 @@ function isRecord(value: unknown): value is RecordValue {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function addError(diagnostics: Diagnostic[], code: string, path: string, message: string): void {
+function addError(diagnostics: IDiagnostic[], code: string, path: string, message: string): void {
     diagnostics.push({ code, severity: "error", path, message });
 }
 
-function validateNonNegativeNumber(value: unknown, path: string, diagnostics: Diagnostic[]): void {
+function validateNonNegativeNumber(value: unknown, path: string, diagnostics: IDiagnostic[]): void {
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
         addError(diagnostics, "INVALID_NON_NEGATIVE_NUMBER", path, "Expected a finite number greater than or equal to zero.");
     }
 }
 
-function validatePositiveInteger(value: unknown, path: string, diagnostics: Diagnostic[]): void {
+function validatePositiveInteger(value: unknown, path: string, diagnostics: IDiagnostic[]): void {
     if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
         addError(diagnostics, "INVALID_POSITIVE_INTEGER", path, "Expected an integer greater than zero.");
     }
 }
 
-function validateNumberTuple(value: unknown, size: number, path: string, diagnostics: Diagnostic[]): boolean {
+function validateNumberTuple(value: unknown, size: number, path: string, diagnostics: IDiagnostic[]): boolean {
     if (!Array.isArray(value) || value.length !== size || value.some((entry) => typeof entry !== "number" || !Number.isFinite(entry))) {
         addError(diagnostics, "INVALID_NUMBER_TUPLE", path, `Expected exactly ${size} finite numbers.`);
         return false;
@@ -31,13 +31,13 @@ function validateNumberTuple(value: unknown, size: number, path: string, diagnos
     return true;
 }
 
-function validateRootProperties(value: RecordValue, path: string, diagnostics: Diagnostic[]): void {
+function validateRootProperties(value: RecordValue, path: string, diagnostics: IDiagnostic[]): void {
     if (value.extensions !== undefined && !isRecord(value.extensions)) {
         addError(diagnostics, "INVALID_EXTENSIONS", `${path}/extensions`, "Expected an object keyed by extension name.");
     }
 }
 
-function validateBoundingVolume(value: unknown, path: string, diagnostics: Diagnostic[]): value is BoundingVolume {
+function validateBoundingVolume(value: unknown, path: string, diagnostics: IDiagnostic[]): value is IBoundingVolume {
     if (!isRecord(value)) {
         addError(diagnostics, "INVALID_BOUNDING_VOLUME", path, "Expected a bounding volume object.");
         return false;
@@ -66,7 +66,7 @@ function validateBoundingVolume(value: unknown, path: string, diagnostics: Diagn
     return true;
 }
 
-function validateMetadataEntity(value: unknown, path: string, diagnostics: Diagnostic[]): value is MetadataEntity {
+function validateMetadataEntity(value: unknown, path: string, diagnostics: IDiagnostic[]): value is IMetadataEntity {
     if (!isRecord(value)) {
         addError(diagnostics, "INVALID_METADATA_ENTITY", path, "Expected a metadata entity object.");
         return false;
@@ -81,7 +81,7 @@ function validateMetadataEntity(value: unknown, path: string, diagnostics: Diagn
     return true;
 }
 
-function validateContent(value: unknown, path: string, diagnostics: Diagnostic[]): void {
+function validateContent(value: unknown, path: string, diagnostics: IDiagnostic[]): void {
     if (!isRecord(value)) {
         addError(diagnostics, "INVALID_CONTENT", path, "Expected a content object.");
         return;
@@ -97,7 +97,7 @@ function validateContent(value: unknown, path: string, diagnostics: Diagnostic[]
     }
 }
 
-function validateImplicitTiling(value: unknown, path: string, diagnostics: Diagnostic[]): void {
+function validateImplicitTiling(value: unknown, path: string, diagnostics: IDiagnostic[]): void {
     if (!isRecord(value)) {
         addError(diagnostics, "INVALID_IMPLICIT_TILING", path, "Expected an implicit tiling object.");
         return;
@@ -113,7 +113,16 @@ function validateImplicitTiling(value: unknown, path: string, diagnostics: Diagn
     }
 }
 
-function validateTile(value: unknown, path: string, diagnostics: Diagnostic[], root: boolean): value is Tile {
+function validateImplicitTemplate(uri: unknown, scheme: unknown, path: string, diagnostics: IDiagnostic[]): void {
+    if (typeof uri !== "string") return;
+    for (const variable of scheme === "OCTREE" ? ["{level}", "{x}", "{y}", "{z}"] : ["{level}", "{x}", "{y}"]) {
+        if (!uri.includes(variable)) {
+            addError(diagnostics, "INVALID_IMPLICIT_TEMPLATE", path, `Implicit template URI must contain ${variable}.`);
+        }
+    }
+}
+
+function validateTile(value: unknown, path: string, diagnostics: IDiagnostic[], root: boolean): value is ITile {
     if (!isRecord(value)) {
         addError(diagnostics, "INVALID_TILE", path, "Expected a tile object.");
         return false;
@@ -142,7 +151,33 @@ function validateTile(value: unknown, path: string, diagnostics: Diagnostic[], r
         }
     }
     if (value.metadata !== undefined) validateMetadataEntity(value.metadata, `${path}/metadata`, diagnostics);
-    if (value.implicitTiling !== undefined) validateImplicitTiling(value.implicitTiling, `${path}/implicitTiling`, diagnostics);
+    if (value.implicitTiling !== undefined) {
+        validateImplicitTiling(value.implicitTiling, `${path}/implicitTiling`, diagnostics);
+        const implicit = isRecord(value.implicitTiling) ? value.implicitTiling : undefined;
+        if (value.children !== undefined) {
+            addError(diagnostics, "IMPLICIT_CHILDREN_FORBIDDEN", `${path}/children`, "An implicit root tile must omit children.");
+        }
+        if (value.metadata !== undefined) {
+            addError(diagnostics, "IMPLICIT_METADATA_FORBIDDEN", `${path}/metadata`, "An implicit root tile must omit inline tile metadata.");
+        }
+        if (isRecord(value.boundingVolume) && value.boundingVolume.sphere !== undefined) {
+            addError(diagnostics, "IMPLICIT_SPHERE_FORBIDDEN", `${path}/boundingVolume/sphere`, "Implicit tiling cannot subdivide a sphere.");
+        }
+        const contents = value.contents ?? (value.content === undefined ? [] : [value.content]);
+        if (Array.isArray(contents)) {
+            contents.forEach((content, index) => {
+                if (!isRecord(content)) return;
+                const contentPath = value.contents === undefined ? `${path}/content` : `${path}/contents/${index}`;
+                if (content.boundingVolume !== undefined) {
+                    addError(diagnostics, "IMPLICIT_CONTENT_BOUNDING_VOLUME_FORBIDDEN", `${contentPath}/boundingVolume`, "Implicit content templates must omit boundingVolume.");
+                }
+                validateImplicitTemplate(content.uri, implicit?.subdivisionScheme, `${contentPath}/uri`, diagnostics);
+            });
+        }
+        if (implicit && isRecord(implicit.subtrees)) {
+            validateImplicitTemplate(implicit.subtrees.uri, implicit.subdivisionScheme, `${path}/implicitTiling/subtrees/uri`, diagnostics);
+        }
+    }
     if (value.children !== undefined) {
         if (!Array.isArray(value.children) || value.children.length === 0) {
             addError(diagnostics, "INVALID_CHILDREN", `${path}/children`, "Expected a non-empty child tile array.");
@@ -153,7 +188,7 @@ function validateTile(value: unknown, path: string, diagnostics: Diagnostic[], r
     return true;
 }
 
-function validateStringArray(value: unknown, path: string, diagnostics: Diagnostic[]): string[] | undefined {
+function validateStringArray(value: unknown, path: string, diagnostics: IDiagnostic[]): string[] | undefined {
     if (value === undefined) return undefined;
     if (!Array.isArray(value) || value.length === 0 || value.some((entry) => typeof entry !== "string" || entry.length === 0)) {
         addError(diagnostics, "INVALID_STRING_ARRAY", path, "Expected a non-empty array of non-empty strings.");
@@ -162,8 +197,8 @@ function validateStringArray(value: unknown, path: string, diagnostics: Diagnost
     return value as string[];
 }
 
-export function validateTileset(value: unknown): ValidationResult<Tileset> {
-    const diagnostics: Diagnostic[] = [];
+export function validateTileset(value: unknown): IValidationResult<ITileset> {
+    const diagnostics: IDiagnostic[] = [];
     if (!isRecord(value)) {
         addError(diagnostics, "INVALID_TILESET", "", "Expected a tileset object.");
         return { valid: false, diagnostics };
@@ -211,5 +246,5 @@ export function validateTileset(value: unknown): ValidationResult<Tileset> {
     }
 
     const valid = diagnostics.every((diagnostic) => diagnostic.severity !== "error");
-    return valid ? { valid: true, diagnostics, value: value as Tileset } : { valid: false, diagnostics };
+    return valid ? { valid: true, diagnostics, value: value as ITileset } : { valid: false, diagnostics };
 }

@@ -1,14 +1,14 @@
-import type { RootProperty } from "./common";
+import type { IRootProperty } from "./common";
 
 export type SubdivisionScheme = "QUADTREE" | "OCTREE";
 
-export interface SubtreeReference extends RootProperty {
+export interface ISubtreeReference extends IRootProperty {
     uri: string;
 }
 
-export interface ImplicitTiling extends RootProperty {
+export interface IImplicitTiling extends IRootProperty {
     subdivisionScheme: SubdivisionScheme;
     subtreeLevels: number;
     availableLevels: number;
-    subtrees: SubtreeReference;
+    subtrees: ISubtreeReference;
 }

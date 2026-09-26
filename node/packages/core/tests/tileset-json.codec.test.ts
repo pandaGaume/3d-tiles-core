@@ -4,20 +4,20 @@ import { describe, expect, it } from "vitest";
 
 import { TilesetCodecError, TilesetJsonCodec, validateTileset } from "../src";
 
-interface FixtureCase {
+interface IFixtureCase {
     id: string;
     path: string;
     valid: boolean;
     expectedCodes: string[];
 }
 
-interface FixtureManifest {
+interface IFixtureManifest {
     suite: string;
-    cases: FixtureCase[];
+    cases: IFixtureCase[];
 }
 
 const fixtureRoot = new URL("../../../../conformance/3d-tiles-1.1/", import.meta.url);
-const manifest = JSON.parse(readFileSync(new URL("manifest.json", fixtureRoot), "utf8")) as FixtureManifest;
+const manifest = JSON.parse(readFileSync(new URL("manifest.json", fixtureRoot), "utf8")) as IFixtureManifest;
 const codec = new TilesetJsonCodec();
 
 describe(manifest.suite, () => {
@@ -66,5 +66,37 @@ describe("TilesetJsonCodec", () => {
             expect(error).toBeInstanceOf(TilesetCodecError);
             expect((error as TilesetCodecError).diagnostics).toEqual([]);
         }
+    });
+
+    it("enforces normative implicit-root and template constraints", () => {
+        const result = validateTileset({
+            asset: { version: "1.1" },
+            geometricError: 1,
+            root: {
+                boundingVolume: { sphere: [0, 0, 0, 1] },
+                geometricError: 1,
+                refine: "REPLACE",
+                content: { uri: "content/{level}/{x}.glb", boundingVolume: { sphere: [0, 0, 0, 1] } },
+                metadata: { class: "Invalid" },
+                children: [{ boundingVolume: { sphere: [0, 0, 0, 1] }, geometricError: 0 }],
+                implicitTiling: {
+                    subdivisionScheme: "OCTREE",
+                    subtreeLevels: 2,
+                    availableLevels: 3,
+                    subtrees: { uri: "subtrees/{level}/{x}/{y}.subtree" },
+                },
+            },
+        });
+
+        expect(result.valid).toBe(false);
+        expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+            expect.arrayContaining([
+                "IMPLICIT_CHILDREN_FORBIDDEN",
+                "IMPLICIT_METADATA_FORBIDDEN",
+                "IMPLICIT_SPHERE_FORBIDDEN",
+                "IMPLICIT_CONTENT_BOUNDING_VOLUME_FORBIDDEN",
+                "INVALID_IMPLICIT_TEMPLATE",
+            ])
+        );
     });
 });
