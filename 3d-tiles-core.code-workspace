@@ -1,27 +1,27 @@
 {
     "folders": [
         {
-            "name": "3D Tiles Core",
+            "name": "📦 Workspace",
             "path": "."
         },
         {
-            "name": "Node Core",
+            "name": "🧱 3D Tiles Core",
             "path": "node/packages/core"
         },
         {
-            "name": "Node Runtime",
+            "name": "⚙️ 3D Tiles Runtime",
             "path": "node/packages/runtime"
         },
         {
-            "name": "Geodesy",
+            "name": "🌐 Geodesy",
             "path": "../geodesy_ts"
         },
         {
-            "name": ".NET",
+            "name": "🔷 3D Tiles .NET",
             "path": "dotnet"
         },
         {
-            "name": "C++ and Unreal",
+            "name": "🎮 3D Tiles C++ and Unreal",
             "path": "cpp"
         }
     ],
@@ -72,7 +72,7 @@
                 "type": "shell",
                 "command": "npm ci",
                 "options": {
-                    "cwd": "${workspaceFolder:3D Tiles Core}/node"
+                    "cwd": "${workspaceFolder:📦 3D Tiles Core}/node"
                 },
                 "problemMatcher": []
             },
@@ -81,7 +81,7 @@
                 "type": "shell",
                 "command": "npm run build",
                 "options": {
-                    "cwd": "${workspaceFolder:3D Tiles Core}/node"
+                    "cwd": "${workspaceFolder:📦 3D Tiles Core}/node"
                 },
                 "group": {
                     "kind": "build",
@@ -94,7 +94,7 @@
                 "type": "shell",
                 "command": "npm run test",
                 "options": {
-                    "cwd": "${workspaceFolder:3D Tiles Core}/node"
+                    "cwd": "${workspaceFolder:📦 3D Tiles Core}/node"
                 },
                 "group": "test",
                 "problemMatcher": []
@@ -104,7 +104,7 @@
                 "type": "shell",
                 "command": "npm run check",
                 "options": {
-                    "cwd": "${workspaceFolder:3D Tiles Core}/node"
+                    "cwd": "${workspaceFolder:📦 3D Tiles Core}/node"
                 },
                 "problemMatcher": ["$tsc"]
             },
@@ -113,7 +113,7 @@
                 "type": "shell",
                 "command": "npm run watch",
                 "options": {
-                    "cwd": "${workspaceFolder:Node Runtime}"
+                    "cwd": "${workspaceFolder:⚙️ Node Runtime}"
                 },
                 "isBackground": true,
                 "problemMatcher": []
@@ -123,7 +123,7 @@
                 "type": "shell",
                 "command": "npm ci",
                 "options": {
-                    "cwd": "${workspaceFolder:Geodesy}"
+                    "cwd": "${workspaceFolder:🌐 Geodesy}"
                 },
                 "problemMatcher": []
             },
@@ -132,7 +132,7 @@
                 "type": "shell",
                 "command": "npm run build",
                 "options": {
-                    "cwd": "${workspaceFolder:Geodesy}"
+                    "cwd": "${workspaceFolder:🌐 Geodesy}"
                 },
                 "problemMatcher": ["$tsc"]
             },
@@ -141,7 +141,7 @@
                 "type": "shell",
                 "command": "npm run test",
                 "options": {
-                    "cwd": "${workspaceFolder:Geodesy}"
+                    "cwd": "${workspaceFolder:🌐 Geodesy}"
                 },
                 "group": "test",
                 "problemMatcher": []
@@ -151,7 +151,7 @@
                 "type": "shell",
                 "command": "npm run check",
                 "options": {
-                    "cwd": "${workspaceFolder:Geodesy}"
+                    "cwd": "${workspaceFolder:🌐 Geodesy}"
                 },
                 "problemMatcher": ["$tsc"]
             },
@@ -160,7 +160,7 @@
                 "type": "shell",
                 "command": "npm run docs",
                 "options": {
-                    "cwd": "${workspaceFolder:Geodesy}"
+                    "cwd": "${workspaceFolder:🌐 Geodesy}"
                 },
                 "problemMatcher": []
             },
