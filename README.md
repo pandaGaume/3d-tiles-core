@@ -26,6 +26,14 @@ Ellipsoid, geodetic, ECEF and local tangent frame mathematics live in the indepe
 
 ## Node.js development
 
+Open the multi-root workspace to work on 3D Tiles Core, its runtime and the adjacent geodesy package together:
+
+```powershell
+code .\3d-tiles-core.code-workspace
+```
+
+`Ctrl+Shift+B` runs the default `3D Tiles: build` task from the correct `node` workspace. The VS Code task palette also provides install, test, check, runtime watch and geodesy documentation tasks.
+
 ```bash
 cd node
 npm ci
