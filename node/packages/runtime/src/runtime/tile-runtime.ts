@@ -62,6 +62,19 @@ export interface ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHa
     adapter: IRuntimeAdapter<TCamera, TSpatial, TContentHandle, TGlyphHandle>;
     maxScreenSpaceError?: number;
     maxScreenSpaceErrorForDepth?: (depth: number, defaultValue: number) => number;
+    /**
+     * Fraction of the SSE threshold retained while coarsening. A value of
+     * `0.1` refines above the configured threshold and coarsens only below
+     * 90 percent of it. This prevents LOD oscillation near the threshold.
+     */
+    refinementHysteresisRatio?: number;
+    /**
+     * Keeps already selected descendants while their coarser replacement is
+     * loading, or as a last-resort fallback when no ready renderable ancestor
+     * exists. Correct visual coverage never depends on the cache. Defaults to
+     * true.
+     */
+    stableReplacementCut?: boolean;
     maxConcurrentLoads?: number;
     maxLoadAttempts?: number;
     cache?: IRuntimeCacheOptions | false;
@@ -89,6 +102,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
 
     private readonly maxScreenSpaceError: number;
     private readonly maxScreenSpaceErrorForDepth: ((depth: number, defaultValue: number) => number) | undefined;
+    private readonly refinementHysteresisRatio: number;
+    private readonly stableReplacementCut: boolean;
     private readonly maxLoadAttempts: number;
     private readonly cacheOptions: IResolvedRuntimeCacheOptions;
     private readonly cacheCounters: IRuntimeCacheCounters = {
@@ -106,6 +121,9 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     private readonly scheduler: PriorityScheduler;
     private readonly lifecycleController = new AbortController();
     private readonly nodes = new Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>();
+    private readonly refiningNodes = new Set<string>();
+    private readonly replacementFrontNodes = new Set<string>();
+    private selectedAtFrameStart: Array<IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>> = [];
 
     private rootNode?: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>;
     private rootDocument?: IRuntimeTilesetDocument;
@@ -115,9 +133,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     private lastCamera?: TCamera;
     private frame = 0;
     private disposed = false;
-    private refreshQueued = false;
-    private refreshAgain = false;
-    private refreshPromise: Promise<void> | undefined;
+    private refreshNeeded = false;
 
     public constructor(options: ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHandle>) {
         this.id = options.id;
@@ -125,6 +141,11 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         this.adapter = options.adapter;
         this.maxScreenSpaceError = options.maxScreenSpaceError ?? 16;
         this.maxScreenSpaceErrorForDepth = options.maxScreenSpaceErrorForDepth;
+        this.refinementHysteresisRatio = options.refinementHysteresisRatio ?? 0.1;
+        if (!Number.isFinite(this.refinementHysteresisRatio) || this.refinementHysteresisRatio < 0 || this.refinementHysteresisRatio >= 1) {
+            throw new RangeError("refinementHysteresisRatio must be in the interval [0, 1).");
+        }
+        this.stableReplacementCut = options.stableReplacementCut ?? true;
         this.maxLoadAttempts = Math.max(1, Math.floor(options.maxLoadAttempts ?? 3));
         this.cacheOptions = resolveRuntimeCacheOptions(options.cache);
         this.hooks = options.hooks ?? [];
@@ -143,6 +164,15 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
 
     public get pendingLoads(): number {
         return this.scheduler.size;
+    }
+
+    /** True when settled asynchronous state still needs a caller-driven frame. */
+    public get hasPendingWork(): boolean {
+        // Queued and in-flight fetches run independently. Pumping traversal
+        // frames while they are unresolved only ages the cache and repeats the
+        // same cut. Their settlement calls markDirty(), which requests exactly
+        // one new frame.
+        return this.refreshNeeded;
     }
 
     public get selectedTiles(): readonly IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>[] {
@@ -183,12 +213,14 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     }
 
     public async whenIdle(): Promise<void> {
-        do {
+        while (!this.disposed) {
             await this.scheduler.whenIdle();
-            const refresh = this.refreshPromise;
-            if (refresh) await refresh;
             await this.updateChain;
-        } while (this.scheduler.size > 0 || this.refreshQueued || this.refreshAgain);
+            if (this.scheduler.size > 0) continue;
+            const camera = this.lastCamera;
+            if (!this.refreshNeeded || camera === undefined) return;
+            await this.update(camera);
+        }
     }
 
     public async dispose(): Promise<void> {
@@ -203,6 +235,9 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         for (const node of selected) await this.deactivateNode(node);
         for (const node of [...this.nodes.values()].sort((left, right) => right.depth - left.depth)) await this.disposeNodeContent(node);
         this.nodes.clear();
+        this.refiningNodes.clear();
+        this.replacementFrontNodes.clear();
+        this.selectedAtFrameStart = [];
         this.events.clear();
         this.instrumentation.clear();
     }
@@ -213,6 +248,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         const root = this.rootNode;
         if (!root) throw new Error("The root tileset is not initialized.");
         this.lastCamera = camera;
+        // A frame consumes the state accumulated by completed asynchronous
+        // work. Loads that settle during this traversal set the flag again and
+        // are consumed by the next caller-driven frame.
+        this.refreshNeeded = false;
         const currentFrame = ++this.frame;
         const beforeContext: IFrameHookContext<TCamera, TSpatial, TContentHandle, TGlyphHandle> = {
             runtimeId: this.id,
@@ -223,6 +262,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
 
         const desired = new Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>();
         const requested: IRuntimeContent<TContentHandle>[] = [];
+        this.selectedAtFrameStart = [...this.nodes.values()].filter((node) => node.selected);
+        this.replacementFrontNodes.clear();
         for (const node of this.nodes.values()) node.visible = false;
         this.visit(root, camera, desired, requested);
 
@@ -288,10 +329,23 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         }
         const threshold = this.maxScreenSpaceErrorForDepth?.(node.depth, this.maxScreenSpaceError) ?? this.maxScreenSpaceError;
         const hasPotentialPresentation = node.contents.some((content) => content.kind === "unknown" || content.kind === "renderable");
-        const wantsRefinement = node.screenSpaceError > threshold || !hasPotentialPresentation;
-        if (wantsRefinement) this.materializeImplicitChildren(node);
+        const wasRefining = this.refiningNodes.has(node.id);
+        const effectiveThreshold = wasRefining ? threshold * (1 - this.refinementHysteresisRatio) : threshold;
+        const refinementRequested = node.screenSpaceError > effectiveThreshold || !hasPotentialPresentation;
+        if (refinementRequested) this.materializeImplicitChildren(node);
+        const wantsRefinement = refinementRequested && node.children.length > 0;
+        this.setRefinementState(node, wantsRefinement);
 
-        if (!wantsRefinement || node.children.length === 0) {
+        if (!wantsRefinement) {
+            // A coarse tile may have been evicted while its descendants were
+            // selected. Never remove those descendants before the parent is
+            // renderable, otherwise zooming out exposes the clear colour for
+            // one or more load cycles. Correctness must not depend on cache.
+            if (hasPotentialPresentation && !this.isNodePresentationReady(node)) {
+                this.requestNodeContents(node, node.screenSpaceError, requested);
+                if (this.stableReplacementCut && this.retainVisibleSelectedDescendants(node, camera, desired)) return;
+                if (this.selectReadyCoverageAncestor(node.parent, desired, requested)) return;
+            }
             this.selectNode(node, desired, requested);
             return;
         }
@@ -306,6 +360,11 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         if (replacementReady) {
             for (const child of node.children) this.visit(child, camera, desired, requested);
         } else {
+            // A ready ancestor provides complete coverage for every visible
+            // child branch. Previously selected descendants are retained only
+            // when no such ancestor is currently available.
+            if (this.selectReadyCoverageAncestor(node, desired, requested)) return;
+            if (this.stableReplacementCut && this.retainVisibleSelectedDescendants(node, camera, desired)) return;
             this.selectNode(node, desired, requested);
         }
     }
@@ -332,11 +391,92 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         this.materializeImplicitChildren(node);
         const potential = node.contents.filter((content) => content.kind === "unknown" || content.kind === "renderable");
         if (potential.length > 0) {
+            for (const content of potential) content.lastTouchedFrame = this.frame;
+            this.replacementFrontNodes.add(node.id);
             this.requestNodeContents(node, node.screenSpaceError, requested);
             return potential.every((content) => content.kind === "renderable" && content.status === "ready");
         }
         if (node.children.length === 0) return true;
         return node.children.every((child) => this.collectReplacementFront(child, camera, requested));
+    }
+
+    private isNodePresentationReady(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): boolean {
+        const potential = node.contents.filter((content) => content.kind === "unknown" || content.kind === "renderable");
+        return (
+            potential.length > 0 &&
+            potential.every((content) => content.kind === "renderable" && content.status === "ready" && content.handle !== undefined)
+        );
+    }
+
+    private selectReadyCoverageAncestor(
+        start: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle> | undefined,
+        desired: Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>,
+        requested: IRuntimeContent<TContentHandle>[],
+    ): boolean {
+        let candidate = start;
+        while (candidate) {
+            if (this.isNodePresentationReady(candidate)) {
+                this.selectNode(candidate, desired, requested);
+                return true;
+            }
+            candidate = candidate.parent;
+        }
+        return false;
+    }
+
+    private retainVisibleSelectedDescendants(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        camera: TCamera,
+        desired: Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>,
+    ): boolean {
+        let retained = false;
+        for (const candidate of this.selectedAtFrameStart) {
+            if (!this.isDescendantOf(candidate, node)) continue;
+            candidate.visible = this.adapter.spatial.isVisible(candidate.spatial, camera);
+            if (!candidate.visible) continue;
+            candidate.lastTouchedFrame = this.frame;
+            if (candidate.implicit) candidate.implicit.subtree.lastTouchedFrame = this.frame;
+            candidate.screenSpaceError = this.adapter.spatial.screenSpaceError({
+                camera,
+                spatial: candidate.spatial,
+                tile: candidate.source,
+                depth: candidate.depth,
+            });
+            desired.set(candidate.id, candidate);
+            for (const content of candidate.contents) content.lastTouchedFrame = this.frame;
+            retained = true;
+        }
+        return retained;
+    }
+
+    private isDescendantOf(
+        candidate: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        ancestor: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+    ): boolean {
+        let parent = candidate.parent;
+        while (parent) {
+            if (parent === ancestor) return true;
+            parent = parent.parent;
+        }
+        return false;
+    }
+
+    private setRefinementState(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>, refining: boolean): void {
+        const wasRefining = this.refiningNodes.has(node.id);
+        if (wasRefining === refining) return;
+        if (refining) this.refiningNodes.add(node.id);
+        else this.refiningNodes.delete(node.id);
+        this.recordMetric({
+            name: refining ? "tile.refine" : "tile.coarsen",
+            value: 1,
+            unit: "count",
+            tags: {
+                runtime: this.id,
+                tile: node.id,
+                depth: node.depth,
+                screenSpaceError: node.screenSpaceError,
+            },
+        });
     }
 
     protected selectNode(
@@ -416,7 +556,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             await this.reportError("content.load", error, node, content);
         } finally {
             this.events.emit({ type: "content-state", tile: node, content });
-            this.scheduleRefresh();
+            this.markDirty();
         }
     }
 
@@ -920,7 +1060,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
                 await this.reportError("subtree.load", error, node);
             } finally {
                 this.events.emit({ type: "subtree-state", tile: node, subtree });
-                this.scheduleRefresh();
+                this.markDirty();
             }
         });
     }
@@ -1054,7 +1194,11 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
                 entries++;
                 cpuBytes += candidate.cost?.cpuBytes ?? 0;
                 gpuBytes += candidate.cost?.gpuBytes ?? 0;
-                if (node.selected || candidate.attached) continue;
+                // A ready but gated REPLACE-front tile is intentionally not
+                // selected yet. It is nevertheless required for the atomic
+                // swap and must not be evicted while the current traversal is
+                // waiting for its siblings.
+                if (node.selected || candidate.attached || this.replacementFrontNodes.has(node.id)) continue;
                 candidates.push({
                     node,
                     content: candidate as IRuntimeContent<TContentHandle> & { handle: TContentHandle },
@@ -1290,6 +1434,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         await this.invokeHooks("beforeCacheEviction", (hook) => hook.beforeCacheEviction?.(hookContext), parent);
         for (const node of [...descendants].sort((left, right) => right.depth - left.depth)) {
             await this.disposeNodeContent(node);
+            this.refiningNodes.delete(node.id);
+            this.replacementFrontNodes.delete(node.id);
             this.nodes.delete(node.id);
         }
         parent.children = [];
@@ -1440,31 +1586,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         }
     }
 
-    private scheduleRefresh(): void {
-        if (this.disposed || this.lastCamera === undefined) return;
-        if (this.refreshQueued) {
-            this.refreshAgain = true;
-            return;
-        }
-        this.refreshQueued = true;
-        const scheduled = new Promise<void>((resolve) => queueMicrotask(resolve))
-            .then(async () => {
-                do {
-                    this.refreshAgain = false;
-                    const camera = this.lastCamera;
-                    if (camera !== undefined && !this.disposed) await this.update(camera);
-                } while (this.refreshAgain && !this.disposed);
-            })
-            .catch((error) => this.reportError("runtime.refresh", error))
-            .finally(() => {
-                this.refreshQueued = false;
-                this.refreshPromise = undefined;
-                if (this.refreshAgain && !this.disposed) {
-                    this.refreshAgain = false;
-                    this.scheduleRefresh();
-                }
-            });
-        this.refreshPromise = scheduled;
+    private markDirty(): void {
+        if (!this.disposed) this.refreshNeeded = true;
     }
 
     private async invokeHooks(

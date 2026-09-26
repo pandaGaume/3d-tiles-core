@@ -24,6 +24,10 @@ interface IFakeSpatial {
     geometricError: number;
 }
 
+interface IRotationSpatial extends IFakeSpatial {
+    branch: number;
+}
+
 interface IFakeHandle {
     uri: string;
 }
@@ -61,6 +65,23 @@ class FakeSpatialMetric implements ISpatialMetric<IFakeCamera, IFakeSpatial> {
     }
 }
 
+class RotationSpatialMetric implements ISpatialMetric<IFakeCamera, IRotationSpatial> {
+    public derive(context: ISpatialDerivationContext<IRotationSpatial>): IRotationSpatial {
+        return {
+            geometricError: context.tile.geometricError,
+            branch: context.tile.boundingVolume.sphere?.[0] ?? 0,
+        };
+    }
+
+    public isVisible(spatial: IRotationSpatial, camera: IFakeCamera): boolean {
+        return spatial.branch === 0 || spatial.branch === 1 || camera.multiplier < 0;
+    }
+
+    public screenSpaceError(context: { camera: IFakeCamera; spatial: IRotationSpatial }): number {
+        return context.spatial.geometricError * Math.abs(context.camera.multiplier);
+    }
+}
+
 class FakeCameraSource implements ICameraEventSource<IFakeCamera> {
     private listener?: (camera: IFakeCamera) => void;
 
@@ -95,6 +116,46 @@ function tile(uri: string, geometricError = 0): ITile {
 }
 
 describe("TileRuntime", () => {
+    it("applies completed loads on the next caller-driven frame", async () => {
+        const loaded = deferred<ContentLoadResult<IFakeHandle>>();
+        const attached: string[] = [];
+        const adapter: IRuntimeAdapter<IFakeCamera, IFakeSpatial, IFakeHandle, string> = {
+            tilesets: tilesetLoader({
+                asset: { version: "1.1" },
+                geometricError: 0,
+                root: tile("root.glb"),
+            }),
+            spatial: new FakeSpatialMetric(),
+            content: {
+                load: () => loaded.promise,
+                attach: (context) => {
+                    attached.push(context.uri);
+                },
+                detach: () => undefined,
+            },
+        };
+        const runtime = new TileRuntime({ id: "frame-driven", uri: "https://example.test/tileset.json", adapter });
+
+        await runtime.update({ multiplier: 1 });
+        expect(runtime.instrumentation.snapshot().frame).toBe(1);
+        expect(runtime.pendingLoads).toBe(1);
+        expect(runtime.hasPendingWork).toBe(false);
+        expect(attached).toEqual([]);
+
+        loaded.resolve({ kind: "renderable", handle: { uri: "https://example.test/root.glb" } });
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+        expect(runtime.instrumentation.snapshot().frame).toBe(1);
+        expect(runtime.hasPendingWork).toBe(true);
+        expect(attached).toEqual([]);
+
+        await runtime.update({ multiplier: 1 });
+        expect(runtime.instrumentation.snapshot().frame).toBe(2);
+        expect(runtime.hasPendingWork).toBe(false);
+        expect(attached).toEqual(["https://example.test/root.glb"]);
+        await runtime.dispose();
+    });
+
     it("keeps a REPLACE parent visible until the complete child front is ready", async () => {
         const childB = deferred<ContentLoadResult<IFakeHandle>>();
         const operations: string[] = [];
@@ -138,6 +199,167 @@ describe("TileRuntime", () => {
             operations.indexOf("attach:https://example.test/child-b.glb"),
         );
         expect(detachParent).toBeGreaterThan(lastChildAttach);
+        await runtime.dispose();
+    });
+
+    it("uses SSE hysteresis to prevent refine and coarsen oscillation", async () => {
+        const tileset: ITileset = {
+            asset: { version: "1.1" },
+            geometricError: 16,
+            root: {
+                ...tile("root.glb", 16),
+                refine: "REPLACE",
+                children: [tile("child.glb")],
+            },
+        };
+        const adapter: IRuntimeAdapter<IFakeCamera, IFakeSpatial, IFakeHandle, string> = {
+            tilesets: tilesetLoader(tileset),
+            spatial: new FakeSpatialMetric(),
+            content: {
+                load: async (context) => ({ kind: "renderable", handle: { uri: context.uri } }),
+                attach: () => undefined,
+                detach: () => undefined,
+            },
+        };
+        const runtime = new TileRuntime({
+            id: "hysteresis",
+            uri: "https://example.test/tileset.json",
+            adapter,
+            maxScreenSpaceError: 10,
+            refinementHysteresisRatio: 0.2,
+        });
+
+        await runtime.update({ multiplier: 1 });
+        await runtime.whenIdle();
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["hysteresis/root/0"]);
+
+        await runtime.update({ multiplier: 0.6 });
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["hysteresis/root/0"]);
+
+        await runtime.update({ multiplier: 0.49 });
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["hysteresis/root"]);
+        expect(runtime.instrumentation.snapshot().metrics["tile.refine"]?.count).toBe(1);
+        expect(runtime.instrumentation.snapshot().metrics["tile.coarsen"]?.count).toBe(1);
+        await runtime.dispose();
+    });
+
+    it("keeps children presented until an evicted parent is ready during zoom out", async () => {
+        const parentReload = deferred<ContentLoadResult<IFakeHandle>>();
+        const operations: string[] = [];
+        let parentLoads = 0;
+        const tileset: ITileset = {
+            asset: { version: "1.1" },
+            geometricError: 100,
+            root: {
+                ...tile("root.glb", 100),
+                refine: "REPLACE",
+                children: [tile("child.glb")],
+            },
+        };
+        const adapter: IRuntimeAdapter<IFakeCamera, IFakeSpatial, IFakeHandle, string> = {
+            tilesets: tilesetLoader(tileset),
+            spatial: new FakeSpatialMetric(),
+            content: {
+                load: async (context) => {
+                    if (context.uri.endsWith("root.glb")) {
+                        parentLoads++;
+                        if (parentLoads > 1) return parentReload.promise;
+                    }
+                    return { kind: "renderable", handle: { uri: context.uri } };
+                },
+                attach: (context) => {
+                    operations.push(`attach:${context.uri}`);
+                },
+                detach: (context) => {
+                    operations.push(`detach:${context.uri}`);
+                },
+                dispose: () => undefined,
+            },
+        };
+        const runtime = new TileRuntime({
+            id: "zoom-out",
+            uri: "https://example.test/tileset.json",
+            adapter,
+            maxScreenSpaceError: 10,
+            cache: { maxContentEntries: 1, unusedFrameRetention: 1000 },
+        });
+
+        await runtime.update({ multiplier: 0 });
+        await runtime.whenIdle();
+        await runtime.update({ multiplier: 1 });
+        await runtime.whenIdle();
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["zoom-out/root/0"]);
+        expect(parentLoads).toBe(1);
+
+        operations.length = 0;
+        await runtime.update({ multiplier: 0 });
+        expect(parentLoads).toBe(2);
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["zoom-out/root/0"]);
+        expect(operations).not.toContain("detach:https://example.test/child.glb");
+
+        parentReload.resolve({ kind: "renderable", handle: { uri: "https://example.test/root.glb" } });
+        await runtime.whenIdle();
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["zoom-out/root"]);
+        expect(operations.indexOf("attach:https://example.test/root.glb")).toBeLessThan(
+            operations.indexOf("detach:https://example.test/child.glb"),
+        );
+        await runtime.dispose();
+    });
+
+    it("uses a ready ancestor as complete coverage while a camera rotation reveals a loading branch", async () => {
+        const loads: string[] = [];
+        const operations: string[] = [];
+        const childBLoad = deferred<ContentLoadResult<IFakeHandle>>();
+        const childA = { ...tile("child-a.glb"), boundingVolume: { sphere: [1, 0, 0, 10] as [number, number, number, number] } };
+        const childB = { ...tile("child-b.glb"), boundingVolume: { sphere: [-1, 0, 0, 10] as [number, number, number, number] } };
+        const tileset: ITileset = {
+            asset: { version: "1.1" },
+            geometricError: 100,
+            root: {
+                ...tile("root.glb", 100),
+                refine: "REPLACE",
+                children: [childA, childB],
+            },
+        };
+        const adapter: IRuntimeAdapter<IFakeCamera, IRotationSpatial, IFakeHandle, string> = {
+            tilesets: tilesetLoader(tileset),
+            spatial: new RotationSpatialMetric(),
+            content: {
+                load: async (context) => {
+                    loads.push(context.uri);
+                    if (context.uri.endsWith("child-b.glb")) return childBLoad.promise;
+                    return { kind: "renderable", handle: { uri: context.uri } };
+                },
+                attach: (context) => {
+                    operations.push(`attach:${context.uri}`);
+                },
+                detach: (context) => {
+                    operations.push(`detach:${context.uri}`);
+                },
+            },
+        };
+        const runtime = new TileRuntime({
+            id: "rotation",
+            uri: "https://example.test/tileset.json",
+            adapter,
+            maxScreenSpaceError: 10,
+        });
+
+        await runtime.update({ multiplier: 1 });
+        await runtime.whenIdle();
+        expect(loads).toContain("https://example.test/child-a.glb");
+        expect(loads).not.toContain("https://example.test/child-b.glb");
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["rotation/root/0"]);
+
+        operations.length = 0;
+        await runtime.update({ multiplier: -1 });
+        expect(loads).toContain("https://example.test/child-b.glb");
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["rotation/root"]);
+        expect(operations).toContain("attach:https://example.test/root.glb");
+
+        childBLoad.resolve({ kind: "renderable", handle: { uri: "https://example.test/child-b.glb" } });
+        await runtime.whenIdle();
+        expect(runtime.selectedTiles.map((node) => node.id).sort()).toEqual(["rotation/root/0", "rotation/root/1"]);
         await runtime.dispose();
     });
 

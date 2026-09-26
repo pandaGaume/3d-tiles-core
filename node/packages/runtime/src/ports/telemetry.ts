@@ -14,6 +14,8 @@ export type RuntimeMetricName =
     | "content.cache.evict"
     | "tile.attach"
     | "tile.detach"
+    | "tile.refine"
+    | "tile.coarsen"
     | "tile.node.prune"
     | "cache.sweep.duration"
     | "cache.content.entries"

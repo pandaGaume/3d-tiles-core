@@ -13,6 +13,10 @@
             "path": "node/packages/runtime"
         },
         {
+            "name": "🌍 Babylon Google 3D Tiles",
+            "path": "node/examples/babylon-google-3d-tiles"
+        },
+        {
             "name": "🌐 Geodesy",
             "path": "../geodesy_ts"
         },
@@ -72,7 +76,7 @@
                 "type": "shell",
                 "command": "npm ci",
                 "options": {
-                    "cwd": "${workspaceFolder:📦 3D Tiles Core}/node"
+                    "cwd": "${workspaceFolder:📦 Workspace}/node"
                 },
                 "problemMatcher": []
             },
@@ -81,7 +85,7 @@
                 "type": "shell",
                 "command": "npm run build",
                 "options": {
-                    "cwd": "${workspaceFolder:📦 3D Tiles Core}/node"
+                    "cwd": "${workspaceFolder:📦 Workspace}/node"
                 },
                 "group": {
                     "kind": "build",
@@ -94,7 +98,7 @@
                 "type": "shell",
                 "command": "npm run test",
                 "options": {
-                    "cwd": "${workspaceFolder:📦 3D Tiles Core}/node"
+                    "cwd": "${workspaceFolder:📦 Workspace}/node"
                 },
                 "group": "test",
                 "problemMatcher": []
@@ -104,7 +108,7 @@
                 "type": "shell",
                 "command": "npm run check",
                 "options": {
-                    "cwd": "${workspaceFolder:📦 3D Tiles Core}/node"
+                    "cwd": "${workspaceFolder:📦 Workspace}/node"
                 },
                 "problemMatcher": ["$tsc"]
             },
@@ -113,7 +117,36 @@
                 "type": "shell",
                 "command": "npm run watch",
                 "options": {
-                    "cwd": "${workspaceFolder:⚙️ Node Runtime}"
+                    "cwd": "${workspaceFolder:⚙️ 3D Tiles Runtime}"
+                },
+                "isBackground": true,
+                "problemMatcher": []
+            },
+            {
+                "label": "Babylon Google 3D Tiles: dev",
+                "type": "shell",
+                "command": "npm run dev",
+                "options": {
+                    "cwd": "${workspaceFolder:🌍 Babylon Google 3D Tiles}"
+                },
+                "isBackground": true,
+                "problemMatcher": []
+            },
+            {
+                "label": "Babylon Google 3D Tiles: build",
+                "type": "shell",
+                "command": "npm run build",
+                "options": {
+                    "cwd": "${workspaceFolder:🌍 Babylon Google 3D Tiles}"
+                },
+                "problemMatcher": ["$tsc"]
+            },
+            {
+                "label": "Babylon Google 3D Tiles: preview",
+                "type": "shell",
+                "command": "npm run preview",
+                "options": {
+                    "cwd": "${workspaceFolder:🌍 Babylon Google 3D Tiles}"
                 },
                 "isBackground": true,
                 "problemMatcher": []

@@ -13,6 +13,7 @@ The repository is organized by target language so the same contracts can later b
 ```text
 node/packages/core/  TypeScript interfaces, codecs and validation
 node/packages/runtime/ Renderer-neutral traversal, loading and presentation lifecycle
+node/examples/babylon-google-3d-tiles/ Babylon.js and Google Photorealistic 3D Tiles example
 conformance/         Shared positive and negative conformance fixtures
 dotnet/              Reserved for the future .NET implementation
 cpp/                 Reserved for the future C++ and Unreal implementation
@@ -41,6 +42,12 @@ npm run check
 ```
 
 The Node workspace publishes `@spacexr/3d-tiles-core` and `@spacexr/3d-tiles-runtime` under the `pandaGaume` GitHub organization.
+
+## Babylon.js example
+
+The first renderer integration uses Babylon.js 9 with its native `GeospatialCamera`, large-world rendering and Google Photorealistic 3D Tiles. Its Google Map Tiles API key is read from an untracked `.env` file and is never embedded in repository source files.
+
+See [Babylon.js and Google Photorealistic 3D Tiles](node/examples/babylon-google-3d-tiles/README.md) for Google Cloud setup, attribution requirements and local execution.
 
 ## Architectural rule
 
