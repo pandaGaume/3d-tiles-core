@@ -1,0 +1,215 @@
+import type { BoundingVolume, MetadataEntity, Tile, Tileset } from "../model";
+import type { Diagnostic, ValidationResult } from "./diagnostic";
+
+type RecordValue = Record<string, unknown>;
+
+function isRecord(value: unknown): value is RecordValue {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function addError(diagnostics: Diagnostic[], code: string, path: string, message: string): void {
+    diagnostics.push({ code, severity: "error", path, message });
+}
+
+function validateNonNegativeNumber(value: unknown, path: string, diagnostics: Diagnostic[]): void {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        addError(diagnostics, "INVALID_NON_NEGATIVE_NUMBER", path, "Expected a finite number greater than or equal to zero.");
+    }
+}
+
+function validatePositiveInteger(value: unknown, path: string, diagnostics: Diagnostic[]): void {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+        addError(diagnostics, "INVALID_POSITIVE_INTEGER", path, "Expected an integer greater than zero.");
+    }
+}
+
+function validateNumberTuple(value: unknown, size: number, path: string, diagnostics: Diagnostic[]): boolean {
+    if (!Array.isArray(value) || value.length !== size || value.some((entry) => typeof entry !== "number" || !Number.isFinite(entry))) {
+        addError(diagnostics, "INVALID_NUMBER_TUPLE", path, `Expected exactly ${size} finite numbers.`);
+        return false;
+    }
+    return true;
+}
+
+function validateRootProperties(value: RecordValue, path: string, diagnostics: Diagnostic[]): void {
+    if (value.extensions !== undefined && !isRecord(value.extensions)) {
+        addError(diagnostics, "INVALID_EXTENSIONS", `${path}/extensions`, "Expected an object keyed by extension name.");
+    }
+}
+
+function validateBoundingVolume(value: unknown, path: string, diagnostics: Diagnostic[]): value is BoundingVolume {
+    if (!isRecord(value)) {
+        addError(diagnostics, "INVALID_BOUNDING_VOLUME", path, "Expected a bounding volume object.");
+        return false;
+    }
+
+    validateRootProperties(value, path, diagnostics);
+    const members = ["box", "region", "sphere"].filter((name) => value[name] !== undefined);
+    if (members.length !== 1) {
+        addError(diagnostics, "BOUNDING_VOLUME_CARDINALITY", path, "Exactly one of box, region or sphere is required.");
+        return false;
+    }
+
+    if (value.box !== undefined) validateNumberTuple(value.box, 12, `${path}/box`, diagnostics);
+    if (value.region !== undefined) {
+        if (validateNumberTuple(value.region, 6, `${path}/region`, diagnostics)) {
+            const region = value.region as number[];
+            if (region[1] > region[3]) addError(diagnostics, "INVALID_REGION_LATITUDE_ORDER", `${path}/region`, "South must not be greater than north.");
+            if (region[4] > region[5]) addError(diagnostics, "INVALID_REGION_HEIGHT_ORDER", `${path}/region`, "Minimum height must not be greater than maximum height.");
+        }
+    }
+    if (value.sphere !== undefined) {
+        if (validateNumberTuple(value.sphere, 4, `${path}/sphere`, diagnostics) && (value.sphere as number[])[3] < 0) {
+            addError(diagnostics, "INVALID_SPHERE_RADIUS", `${path}/sphere/3`, "Sphere radius must not be negative.");
+        }
+    }
+    return true;
+}
+
+function validateMetadataEntity(value: unknown, path: string, diagnostics: Diagnostic[]): value is MetadataEntity {
+    if (!isRecord(value)) {
+        addError(diagnostics, "INVALID_METADATA_ENTITY", path, "Expected a metadata entity object.");
+        return false;
+    }
+    validateRootProperties(value, path, diagnostics);
+    if (typeof value.class !== "string" || value.class.length === 0) {
+        addError(diagnostics, "INVALID_METADATA_CLASS", `${path}/class`, "Expected a non-empty metadata class identifier.");
+    }
+    if (value.properties !== undefined && !isRecord(value.properties)) {
+        addError(diagnostics, "INVALID_METADATA_PROPERTIES", `${path}/properties`, "Expected an object keyed by property identifier.");
+    }
+    return true;
+}
+
+function validateContent(value: unknown, path: string, diagnostics: Diagnostic[]): void {
+    if (!isRecord(value)) {
+        addError(diagnostics, "INVALID_CONTENT", path, "Expected a content object.");
+        return;
+    }
+    validateRootProperties(value, path, diagnostics);
+    if (typeof value.uri !== "string" || value.uri.length === 0) {
+        addError(diagnostics, "INVALID_CONTENT_URI", `${path}/uri`, "Expected a non-empty content URI.");
+    }
+    if (value.boundingVolume !== undefined) validateBoundingVolume(value.boundingVolume, `${path}/boundingVolume`, diagnostics);
+    if (value.metadata !== undefined) validateMetadataEntity(value.metadata, `${path}/metadata`, diagnostics);
+    if (value.group !== undefined && (!Number.isInteger(value.group) || (value.group as number) < 0)) {
+        addError(diagnostics, "INVALID_CONTENT_GROUP", `${path}/group`, "Expected a non-negative integer group index.");
+    }
+}
+
+function validateImplicitTiling(value: unknown, path: string, diagnostics: Diagnostic[]): void {
+    if (!isRecord(value)) {
+        addError(diagnostics, "INVALID_IMPLICIT_TILING", path, "Expected an implicit tiling object.");
+        return;
+    }
+    validateRootProperties(value, path, diagnostics);
+    if (value.subdivisionScheme !== "QUADTREE" && value.subdivisionScheme !== "OCTREE") {
+        addError(diagnostics, "INVALID_SUBDIVISION_SCHEME", `${path}/subdivisionScheme`, "Expected QUADTREE or OCTREE.");
+    }
+    validatePositiveInteger(value.subtreeLevels, `${path}/subtreeLevels`, diagnostics);
+    validatePositiveInteger(value.availableLevels, `${path}/availableLevels`, diagnostics);
+    if (!isRecord(value.subtrees) || typeof value.subtrees.uri !== "string" || value.subtrees.uri.length === 0) {
+        addError(diagnostics, "INVALID_SUBTREE_URI", `${path}/subtrees/uri`, "Expected a non-empty subtree URI template.");
+    }
+}
+
+function validateTile(value: unknown, path: string, diagnostics: Diagnostic[], root: boolean): value is Tile {
+    if (!isRecord(value)) {
+        addError(diagnostics, "INVALID_TILE", path, "Expected a tile object.");
+        return false;
+    }
+    validateRootProperties(value, path, diagnostics);
+    validateBoundingVolume(value.boundingVolume, `${path}/boundingVolume`, diagnostics);
+    if (value.viewerRequestVolume !== undefined) validateBoundingVolume(value.viewerRequestVolume, `${path}/viewerRequestVolume`, diagnostics);
+    validateNonNegativeNumber(value.geometricError, `${path}/geometricError`, diagnostics);
+
+    if (root && value.refine === undefined) {
+        addError(diagnostics, "MISSING_ROOT_REFINEMENT", `${path}/refine`, "The root tile must declare ADD or REPLACE refinement.");
+    } else if (value.refine !== undefined && value.refine !== "ADD" && value.refine !== "REPLACE") {
+        addError(diagnostics, "INVALID_REFINEMENT", `${path}/refine`, "Expected ADD or REPLACE.");
+    }
+
+    if (value.transform !== undefined) validateNumberTuple(value.transform, 16, `${path}/transform`, diagnostics);
+    if (value.content !== undefined && value.contents !== undefined) {
+        addError(diagnostics, "CONTENT_CARDINALITY", path, "content and contents are mutually exclusive.");
+    }
+    if (value.content !== undefined) validateContent(value.content, `${path}/content`, diagnostics);
+    if (value.contents !== undefined) {
+        if (!Array.isArray(value.contents) || value.contents.length === 0) {
+            addError(diagnostics, "INVALID_CONTENTS", `${path}/contents`, "Expected a non-empty content array.");
+        } else {
+            value.contents.forEach((content, index) => validateContent(content, `${path}/contents/${index}`, diagnostics));
+        }
+    }
+    if (value.metadata !== undefined) validateMetadataEntity(value.metadata, `${path}/metadata`, diagnostics);
+    if (value.implicitTiling !== undefined) validateImplicitTiling(value.implicitTiling, `${path}/implicitTiling`, diagnostics);
+    if (value.children !== undefined) {
+        if (!Array.isArray(value.children) || value.children.length === 0) {
+            addError(diagnostics, "INVALID_CHILDREN", `${path}/children`, "Expected a non-empty child tile array.");
+        } else {
+            value.children.forEach((child, index) => validateTile(child, `${path}/children/${index}`, diagnostics, false));
+        }
+    }
+    return true;
+}
+
+function validateStringArray(value: unknown, path: string, diagnostics: Diagnostic[]): string[] | undefined {
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value) || value.length === 0 || value.some((entry) => typeof entry !== "string" || entry.length === 0)) {
+        addError(diagnostics, "INVALID_STRING_ARRAY", path, "Expected a non-empty array of non-empty strings.");
+        return undefined;
+    }
+    return value as string[];
+}
+
+export function validateTileset(value: unknown): ValidationResult<Tileset> {
+    const diagnostics: Diagnostic[] = [];
+    if (!isRecord(value)) {
+        addError(diagnostics, "INVALID_TILESET", "", "Expected a tileset object.");
+        return { valid: false, diagnostics };
+    }
+
+    validateRootProperties(value, "", diagnostics);
+    if (!isRecord(value.asset)) {
+        addError(diagnostics, "INVALID_ASSET", "/asset", "Expected an asset object.");
+    } else {
+        validateRootProperties(value.asset, "/asset", diagnostics);
+        if (typeof value.asset.version !== "string" || value.asset.version.length === 0) {
+            addError(diagnostics, "INVALID_ASSET_VERSION", "/asset/version", "Expected a non-empty 3D Tiles version.");
+        }
+        if (value.asset.tilesetVersion !== undefined && typeof value.asset.tilesetVersion !== "string") {
+            addError(diagnostics, "INVALID_TILESET_VERSION", "/asset/tilesetVersion", "Expected a string tileset version.");
+        }
+    }
+
+    validateNonNegativeNumber(value.geometricError, "/geometricError", diagnostics);
+    validateTile(value.root, "/root", diagnostics, true);
+
+    if (value.schema !== undefined && value.schemaUri !== undefined) {
+        addError(diagnostics, "SCHEMA_CARDINALITY", "", "schema and schemaUri are mutually exclusive.");
+    }
+    if (value.schema !== undefined && !isRecord(value.schema)) {
+        addError(diagnostics, "INVALID_SCHEMA", "/schema", "Expected an embedded metadata schema object.");
+    }
+    if (value.schemaUri !== undefined && (typeof value.schemaUri !== "string" || value.schemaUri.length === 0)) {
+        addError(diagnostics, "INVALID_SCHEMA_URI", "/schemaUri", "Expected a non-empty schema URI.");
+    }
+    if (value.metadata !== undefined) validateMetadataEntity(value.metadata, "/metadata", diagnostics);
+    if (value.groups !== undefined && (!Array.isArray(value.groups) || value.groups.length === 0)) {
+        addError(diagnostics, "INVALID_GROUPS", "/groups", "Expected a non-empty group metadata array.");
+    }
+
+    const used = validateStringArray(value.extensionsUsed, "/extensionsUsed", diagnostics);
+    const required = validateStringArray(value.extensionsRequired, "/extensionsRequired", diagnostics);
+    if (required) {
+        const usedSet = new Set(used ?? []);
+        required.forEach((extension, index) => {
+            if (!usedSet.has(extension)) {
+                addError(diagnostics, "REQUIRED_EXTENSION_NOT_USED", `/extensionsRequired/${index}`, `Required extension ${extension} is missing from extensionsUsed.`);
+            }
+        });
+    }
+
+    const valid = diagnostics.every((diagnostic) => diagnostic.severity !== "error");
+    return valid ? { valid: true, diagnostics, value: value as Tileset } : { valid: false, diagnostics };
+}

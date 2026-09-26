@@ -1,0 +1,32 @@
+{
+  "asset": {
+    "version": "1.1"
+  },
+  "geometricError": 100,
+  "root": {
+    "boundingVolume": {
+      "box": [0, 0, 0, 10, 0, 0, 0, 10, 0, 0, 0, 10]
+    },
+    "geometricError": 0,
+    "refine": "REPLACE",
+    "content": {
+      "uri": "content/resource",
+      "extras": {
+        "role": "default-presentation"
+      }
+    }
+  },
+  "extensionsUsed": ["VENDOR_example"],
+  "extensions": {
+    "VENDOR_example": {
+      "enabled": true
+    }
+  },
+  "extras": {
+    "source": "conformance"
+  },
+  "applicationDefinedMember": {
+    "preserved": true
+  }
+}
+

@@ -1,0 +1,30 @@
+{
+  "suite": "3D Tiles 1.1 structural baseline",
+  "cases": [
+    {
+      "id": "minimal-extensionless-content",
+      "path": "positive/minimal-extensionless-content.json",
+      "valid": true,
+      "expectedCodes": []
+    },
+    {
+      "id": "content-and-contents",
+      "path": "negative/content-and-contents.json",
+      "valid": false,
+      "expectedCodes": ["CONTENT_CARDINALITY"]
+    },
+    {
+      "id": "required-extension-not-used",
+      "path": "negative/required-extension-not-used.json",
+      "valid": false,
+      "expectedCodes": ["REQUIRED_EXTENSION_NOT_USED"]
+    },
+    {
+      "id": "multiple-bounding-volumes",
+      "path": "negative/multiple-bounding-volumes.json",
+      "valid": false,
+      "expectedCodes": ["BOUNDING_VOLUME_CARDINALITY"]
+    }
+  ]
+}
+

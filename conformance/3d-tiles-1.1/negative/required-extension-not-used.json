@@ -1,0 +1,16 @@
+{
+  "asset": {
+    "version": "1.1"
+  },
+  "geometricError": 0,
+  "root": {
+    "boundingVolume": {
+      "sphere": [0, 0, 0, 1]
+    },
+    "geometricError": 0,
+    "refine": "ADD"
+  },
+  "extensionsUsed": ["VENDOR_optional"],
+  "extensionsRequired": ["VENDOR_missing"]
+}
+
