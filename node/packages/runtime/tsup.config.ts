@@ -6,6 +6,7 @@ export default defineConfig({
         "implicit/index": "src/implicit/index.ts",
         "ports/index": "src/ports/index.ts",
         "metadata/index": "src/metadata/index.ts",
+        "pipeline/index": "src/pipeline/index.ts",
         "spatial/index": "src/spatial/index.ts",
     },
     format: ["esm"],

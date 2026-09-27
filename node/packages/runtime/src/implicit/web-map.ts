@@ -1,138 +1,206 @@
-import type { IContent, ITileset } from "@spacexr/3d-tiles-core";
+import type { IContent, IMetadataEntity, ITileset } from "@spacexr/3d-tiles-core";
 
-import type { IImplicitCoordinates, IImplicitTileResolver, IImplicitTileResolveContext, IImplicitTileOverride } from "./types";
+import {
+    ImplicitTilesetDecorator,
+    type IImplicitTilesetDecoratorOptions,
+    type ITileAddress,
+    type ITileDataSource,
+    type ITileDataSourceTile,
+} from "./tile-data-source";
+import { WebMercatorTileMetrics, type ITileMetrics } from "./metrics";
+import type { IImplicitCoordinates } from "./types";
 
 export type WebMapScheme = "XYZ" | "TMS";
 
-export interface IWebMercatorTileResolverOptions {
+export interface IWebMapTileDataSourceOptions {
+    id?: string;
     urlTemplates: string | readonly string[];
+    metrics: ITileMetrics;
+    rootAddress?: ITileAddress;
     scheme?: WebMapScheme;
-    rootZoom?: number;
-    rootX?: number;
-    rootY?: number;
     minimumHeight?: number;
     maximumHeight?: number;
-    geometricError?: (zoom: number, x: number, y: number) => number;
+    geometricError?: (address: ITileAddress) => number;
+    tileMetadata?: (address: ITileAddress) => IMetadataEntity | undefined;
+    contentMetadata?: (address: ITileAddress, contentIndex: number) => IMetadataEntity | undefined;
 }
 
-export interface IWebMapImplicitSourceOptions extends IWebMercatorTileResolverOptions {
-    maximumZoom: number;
-    subtreeLevels?: number;
+export interface IWebMapImplicitSourceOptions extends IImplicitTilesetDecoratorOptions {
+    id?: string;
+    urlTemplates: string | readonly string[];
+    metrics?: ITileMetrics;
+    rootAddress?: ITileAddress;
+    scheme?: WebMapScheme;
+    minimumHeight?: number;
+    maximumHeight?: number;
+    geometricError?: (address: ITileAddress) => number;
+    tileMetadata?: (address: ITileAddress) => IMetadataEntity | undefined;
+    contentMetadata?: (address: ITileAddress, contentIndex: number) => IMetadataEntity | undefined;
+    /** @deprecated Supply `metrics.minLOD` and `rootAddress` instead. */
+    rootZoom?: number;
+    /** @deprecated Supply `rootAddress.x` instead. */
+    rootX?: number;
+    /** @deprecated Supply `rootAddress.y` instead. */
+    rootY?: number;
+    /** @deprecated Supply `metrics.maxLOD` instead. */
+    maximumZoom?: number;
+    /** @deprecated Supply `metrics.tileSize` instead. */
     tileSize?: number;
-    refine?: "ADD" | "REPLACE";
 }
 
 export interface IWebMapImplicitSource {
+    dataSource: WebMapTileDataSource;
+    decorator: ImplicitTilesetDecorator;
     tileset: ITileset;
-    resolver: WebMercatorTileResolver;
+    resolver: ImplicitTilesetDecorator;
 }
 
-function replaceWebTemplate(template: string, zoom: number, x: number, y: number): string {
+function replaceWebTemplate(template: string, address: ITileAddress): string {
     return template
-        .replaceAll("{z}", String(zoom))
-        .replaceAll("{level}", String(zoom))
-        .replaceAll("{x}", String(x))
-        .replaceAll("{y}", String(y));
+        .replaceAll("{z}", String(address.lod))
+        .replaceAll("{lod}", String(address.lod))
+        .replaceAll("{level}", String(address.lod))
+        .replaceAll("{x}", String(address.x))
+        .replaceAll("{y}", String(address.y));
 }
 
-function xyzRegion(
-    zoom: number,
-    x: number,
-    y: number,
-    minimumHeight: number,
-    maximumHeight: number,
-): [number, number, number, number, number, number] {
-    const count = 2 ** zoom;
-    const longitude = (tileX: number): number => (tileX / count) * Math.PI * 2 - Math.PI;
-    const latitude = (tileY: number): number => Math.atan(Math.sinh(Math.PI * (1 - (2 * tileY) / count)));
-    return [longitude(x), latitude(y + 1), longitude(x + 1), latitude(y), minimumHeight, maximumHeight];
+function assertSafeCoordinate(value: number, name: string): void {
+    if (!Number.isSafeInteger(value) || value < 0) throw new RangeError(`${name} must be a non-negative safe integer.`);
 }
 
-function webCoordinates(
-    coordinates: IImplicitCoordinates,
-    scheme: WebMapScheme,
-    rootZoom: number,
-    rootX: number,
-    rootY: number,
-): { zoom: number; x: number; y: number; xyzY: number } {
-    const localScale = 2 ** coordinates.level;
-    const zoom = rootZoom + coordinates.level;
-    const x = rootX * localScale + coordinates.x;
-    if (scheme === "XYZ") {
-        const y = rootY * localScale + (localScale - 1 - coordinates.y);
-        return { zoom, x, y, xyzY: y };
-    }
-    const y = rootY * localScale + coordinates.y;
-    return { zoom, x, y, xyzY: 2 ** zoom - 1 - y };
-}
+/** XYZ or TMS pyramid whose metric and URL policy are source-owned. */
+export class WebMapTileDataSource implements ITileDataSource {
+    public readonly id: string;
+    public readonly metrics: ITileMetrics;
+    public readonly rootAddress: ITileAddress;
+    public readonly urlTemplates: readonly string[];
 
-export class WebMercatorTileResolver implements IImplicitTileResolver {
-    private readonly templates: readonly string[];
     private readonly scheme: WebMapScheme;
-    private readonly rootZoom: number;
-    private readonly rootX: number;
-    private readonly rootY: number;
     private readonly minimumHeight: number;
     private readonly maximumHeight: number;
-    private readonly geometricError: ((zoom: number, x: number, y: number) => number) | undefined;
+    private readonly geometricErrorOverride: ((address: ITileAddress) => number) | undefined;
+    private readonly tileMetadata: ((address: ITileAddress) => IMetadataEntity | undefined) | undefined;
+    private readonly contentMetadata: ((address: ITileAddress, contentIndex: number) => IMetadataEntity | undefined) | undefined;
 
-    public constructor(options: IWebMercatorTileResolverOptions) {
-        this.templates = typeof options.urlTemplates === "string" ? [options.urlTemplates] : options.urlTemplates;
+    public constructor(options: IWebMapTileDataSourceOptions) {
+        this.id = options.id ?? "web-map";
+        this.metrics = options.metrics;
+        this.rootAddress = options.rootAddress ?? {
+            lod: options.metrics.minLOD,
+            x: 0,
+            y: 0,
+        };
+        this.urlTemplates = typeof options.urlTemplates === "string" ? [options.urlTemplates] : [...options.urlTemplates];
         this.scheme = options.scheme ?? "XYZ";
-        this.rootZoom = options.rootZoom ?? 0;
-        this.rootX = options.rootX ?? 0;
-        this.rootY = options.rootY ?? 0;
         this.minimumHeight = options.minimumHeight ?? 0;
         this.maximumHeight = options.maximumHeight ?? 0;
-        this.geometricError = options.geometricError;
+        this.geometricErrorOverride = options.geometricError;
+        this.tileMetadata = options.tileMetadata;
+        this.contentMetadata = options.contentMetadata;
+
+        assertSafeCoordinate(this.rootAddress.lod, "Root LOD");
+        assertSafeCoordinate(this.rootAddress.x, "Root X");
+        assertSafeCoordinate(this.rootAddress.y, "Root Y");
+        if (this.rootAddress.lod !== this.metrics.minLOD)
+            throw new RangeError(`Root LOD ${this.rootAddress.lod} must equal metrics.minLOD ${this.metrics.minLOD}.`);
+        if (this.maximumHeight < this.minimumHeight) throw new RangeError("maximumHeight must be greater than or equal to minimumHeight.");
     }
 
-    public resolve(context: IImplicitTileResolveContext): IImplicitTileOverride {
-        const tile = webCoordinates(context.coordinates, this.scheme, this.rootZoom, this.rootX, this.rootY);
-        const templates = this.templates.length > 0 ? this.templates : context.computedContents.map((content) => content.uri);
-        const contents: IContent[] = templates.map((template, index) => ({
-            ...(context.computedContents[index] ?? context.computedContents[0] ?? {}),
-            uri: replaceWebTemplate(template, tile.zoom, tile.x, tile.y),
-        }));
+    public addressOf(coordinates: IImplicitCoordinates): ITileAddress {
+        assertSafeCoordinate(coordinates.level, "Implicit level");
+        assertSafeCoordinate(coordinates.x, "Implicit X");
+        assertSafeCoordinate(coordinates.y, "Implicit Y");
+        const scale = 2 ** coordinates.level;
+        if (!Number.isSafeInteger(scale)) throw new RangeError(`Implicit level ${coordinates.level} exceeds the safe coordinate range.`);
+        const lod = this.rootAddress.lod + coordinates.level;
+        if (lod > this.metrics.maxLOD) throw new RangeError(`LOD ${lod} exceeds data source maxLOD ${this.metrics.maxLOD}.`);
+        const x = this.rootAddress.x * scale + coordinates.x;
+        const y =
+            this.scheme === "XYZ" ? this.rootAddress.y * scale + (scale - 1 - coordinates.y) : this.rootAddress.y * scale + coordinates.y;
+        const coordinateCount = 2 ** lod;
+        if (x >= coordinateCount || y >= coordinateCount)
+            throw new RangeError(`Tile ${lod}/${x}/${y} lies outside its addressable pyramid.`);
+        return { lod, x, y };
+    }
+
+    public resolve(coordinates: IImplicitCoordinates, computedContents: readonly IContent[] = []): ITileDataSourceTile {
+        const address = this.addressOf(coordinates);
+        const xyzY = this.scheme === "XYZ" ? address.y : 2 ** address.lod - 1 - address.y;
+        const northWest = this.metrics.getTileXYToLatLon(address.x, xyzY, address.lod);
+        const southEast = this.metrics.getTileXYToLatLon(address.x + 1, xyzY + 1, address.lod);
+        const contents = this.urlTemplates.map((template, index) => {
+            const metadata = this.contentMetadata?.(address, index);
+            return {
+                ...(computedContents[index] ?? computedContents[0] ?? {}),
+                uri: replaceWebTemplate(template, address),
+                ...(metadata ? { metadata } : {}),
+            };
+        });
+        const geometricError = this.geometricErrorOverride?.(address) ?? this.metrics.groundResolution(0, address.lod);
+        const metadata = this.tileMetadata?.(address);
         return {
-            boundingVolume: { region: xyzRegion(tile.zoom, tile.x, tile.xyzY, this.minimumHeight, this.maximumHeight) },
-            ...(this.geometricError ? { geometricError: this.geometricError(tile.zoom, tile.x, tile.y) } : {}),
+            address,
+            boundingVolume: {
+                region: [
+                    (northWest.longitude * Math.PI) / 180,
+                    (southEast.latitude * Math.PI) / 180,
+                    (southEast.longitude * Math.PI) / 180,
+                    (northWest.latitude * Math.PI) / 180,
+                    this.minimumHeight,
+                    this.maximumHeight,
+                ],
+            },
+            geometricError,
             contents,
+            ...(metadata ? { metadata } : {}),
         };
     }
 }
 
+/** Compatibility factory that creates a source, then decorates it as 3D Tiles. */
 export function createWebMapImplicitSource(options: IWebMapImplicitSourceOptions): IWebMapImplicitSource {
-    const rootZoom = options.rootZoom ?? 0;
-    const rootX = options.rootX ?? 0;
-    const rootY = options.rootY ?? 0;
-    if (options.maximumZoom < rootZoom) throw new RangeError("maximumZoom must be greater than or equal to rootZoom.");
-    const scheme = options.scheme ?? "XYZ";
-    const root = webCoordinates({ level: 0, x: 0, y: 0 }, scheme, rootZoom, rootX, rootY);
-    const minimumHeight = options.minimumHeight ?? 0;
-    const maximumHeight = options.maximumHeight ?? 0;
-    const tileSize = options.tileSize ?? 256;
-    const earthCircumference = 2 * Math.PI * 6378137;
-    const rootGeometricError = options.geometricError?.(root.zoom, root.x, root.y) ?? earthCircumference / (tileSize * 2 ** rootZoom);
-    const sourceTemplates = typeof options.urlTemplates === "string" ? [options.urlTemplates] : options.urlTemplates;
-    const standardTemplates = sourceTemplates.map((template) => ({ uri: template.replaceAll("{z}", "{level}") }));
-    const contentShape =
-        standardTemplates.length === 1 ? { content: standardTemplates[0] } : { contents: standardTemplates as [IContent, ...IContent[]] };
-    const tileset: ITileset = {
-        asset: { version: "1.1" },
-        geometricError: rootGeometricError,
-        root: {
-            boundingVolume: { region: xyzRegion(root.zoom, root.x, root.xyzY, minimumHeight, maximumHeight) },
-            geometricError: rootGeometricError,
-            refine: options.refine ?? "REPLACE",
-            ...contentShape,
-            implicitTiling: {
-                subdivisionScheme: "QUADTREE",
-                subtreeLevels: options.subtreeLevels ?? 5,
-                availableLevels: options.maximumZoom - rootZoom + 1,
-                subtrees: { uri: "virtual-subtrees/{level}/{x}/{y}.subtree" },
-            },
+    const legacyMinLOD = options.rootZoom ?? 0;
+    const legacyMaxLOD = options.maximumZoom;
+    const metrics =
+        options.metrics ??
+        new WebMercatorTileMetrics({
+            minLOD: legacyMinLOD,
+            maxLOD:
+                legacyMaxLOD ??
+                (() => {
+                    throw new RangeError("A Web Map source requires metrics or maximumZoom.");
+                })(),
+            ...(options.tileSize !== undefined ? { tileSize: options.tileSize } : {}),
+        });
+    if (options.maximumZoom !== undefined && options.maximumZoom !== metrics.maxLOD)
+        throw new RangeError("maximumZoom conflicts with metrics.maxLOD. Metrics are authoritative.");
+    if (options.tileSize !== undefined && options.tileSize !== metrics.tileSize)
+        throw new RangeError("tileSize conflicts with metrics.tileSize. Metrics are authoritative.");
+
+    const dataSource = new WebMapTileDataSource({
+        ...(options.id !== undefined ? { id: options.id } : {}),
+        urlTemplates: options.urlTemplates,
+        metrics,
+        rootAddress: options.rootAddress ?? {
+            lod: options.rootZoom ?? metrics.minLOD,
+            x: options.rootX ?? 0,
+            y: options.rootY ?? 0,
         },
+        ...(options.scheme !== undefined ? { scheme: options.scheme } : {}),
+        ...(options.minimumHeight !== undefined ? { minimumHeight: options.minimumHeight } : {}),
+        ...(options.maximumHeight !== undefined ? { maximumHeight: options.maximumHeight } : {}),
+        ...(options.geometricError !== undefined ? { geometricError: options.geometricError } : {}),
+        ...(options.tileMetadata !== undefined ? { tileMetadata: options.tileMetadata } : {}),
+        ...(options.contentMetadata !== undefined ? { contentMetadata: options.contentMetadata } : {}),
+    });
+    const decorator = new ImplicitTilesetDecorator(dataSource, {
+        ...(options.subtreeLevels !== undefined ? { subtreeLevels: options.subtreeLevels } : {}),
+        ...(options.refine !== undefined ? { refine: options.refine } : {}),
+    });
+    return {
+        dataSource,
+        decorator,
+        tileset: decorator.tileset,
+        resolver: decorator,
     };
-    return { tileset, resolver: new WebMercatorTileResolver(options) };
 }

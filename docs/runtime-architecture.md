@@ -8,30 +8,43 @@ The runtime owns the algorithm. The adaptation layer owns host integration.
 
 ## Responsibility split
 
-| Responsibility | Runtime | Adaptation layer |
-| --- | --- | --- |
-| Tileset tree and runtime state | Yes | No |
-| SSE traversal and ADD or REPLACE refinement | Yes | No |
-| Hole-free REPLACE transition | Yes | No |
-| Concurrent loading and retries | Yes | No |
-| LRU navigation cache and memory budgets | Yes | Reports CPU, GPU and network costs |
-| External tileset grafting | Yes | Decodes or identifies the external tileset |
-| Implicit QUADTREE and OCTREE traversal | Yes | Loads subtree resources through `IImplicitSubtreeLoader` |
-| Standard JSON and binary `.subtree` resources | Yes | Supplies bytes through `IByteResourceLoader` |
-| XYZ or TMS Web Map and DEM pyramids | Yes | Selects the URL template and decodes tile payloads |
-| URI identity and relative resolution | Yes, through `IRuntimeUriResolver` | May override resolution |
-| glTF decoding | No | `ITileContentAdapter.load` |
-| Scene attachment and placement | No | `ITileContentAdapter.attach` |
-| Scene removal and disposal | No | `ITileContentAdapter.detach` and `dispose` |
-| Camera events | No | `ICameraEventSource` |
-| Visibility, placement and SSE metric | No | `ISpatialMetric` |
-| Labels, anchors and glyphs | No | `IGlyphPublisher` |
-| Real-time statistics and metric aggregation | Yes | May forward metrics through `IRuntimeTelemetry` |
-| Monitoring backend | No | `IRuntimeTelemetry` |
+| Responsibility                                | Runtime                            | Adaptation layer                                         |
+| --------------------------------------------- | ---------------------------------- | -------------------------------------------------------- |
+| Tileset tree and runtime state                | Yes                                | No                                                       |
+| SSE traversal and ADD or REPLACE refinement   | Yes                                | No                                                       |
+| Hole-free REPLACE transition                  | Yes                                | No                                                       |
+| Concurrent loading and retries                | Yes                                | No                                                       |
+| LRU navigation cache and memory budgets       | Yes                                | Reports CPU, GPU and network costs                       |
+| External tileset grafting                     | Yes                                | Decodes or identifies the external tileset               |
+| Implicit QUADTREE and OCTREE traversal        | Yes                                | Loads subtree resources through `IImplicitSubtreeLoader` |
+| Standard JSON and binary `.subtree` resources | Yes                                | Supplies bytes through `IByteResourceLoader`             |
+| XYZ or TMS Web Map and DEM pyramids           | Yes                                | Selects the URL template and decodes tile payloads       |
+| URI identity and relative resolution          | Yes, through `IRuntimeUriResolver` | May override resolution                                  |
+| glTF, terrain or grid preparation             | No                                 | `ITileActivationAdapter` and its readiness port          |
+| Scene attachment and placement                | No                                 | `ITilePresentationAdapter.present`                       |
+| Scene removal and disposal                    | No                                 | `ITilePresentationAdapter.hide` and `release`            |
+| Camera events                                 | No                                 | `ICameraEventSource`                                     |
+| Visibility, placement and SSE metric          | No                                 | `ISpatialMetric`                                         |
+| Labels, anchors and glyphs                    | No                                 | `IGlyphPublisher`                                        |
+| Real-time statistics and metric aggregation   | Yes                                | May forward metrics through `IRuntimeTelemetry`          |
+| Monitoring backend                            | No                                 | `IRuntimeTelemetry`                                      |
 
 The provided `EcefSpatialMetric` is a default implementation for raw ECEF coordinates. It delegates ellipsoid, geodetic conversion and local tangent frame mathematics to `@spacexr/geodesy`. The runtime retains 3D Tiles transform composition, bounding volume derivation, horizon and frustum culling, visibility, and screen-space error. A caller can inject a `GeodeticSystem` for WGS84 or another oblate body. An adapter may replace the complete metric when a scene uses a local origin, a floating origin, another reference frame or another unit.
 
 ## Content lifecycle
+
+The preferred API separates camera selection, asynchronous readiness and visual presentation:
+
+1. traversal activates a `Tile3D` through `ITileActivationAdapter.activate`;
+2. the adapter prepares each opaque renderer resource;
+3. the adapter calls `ITileReadinessPort.ready`, `failed` or `cancelled`;
+4. the runtime resolves metadata and calls `ITilePresentationAdapter.present` only when the replacement cut is complete;
+5. presentation can be hidden while its renderer handle remains cached;
+6. cache eviction calls `release`.
+
+The legacy `ITileContentAdapter` remains supported for compatibility. New Babylon, Three.js or Unreal adaptation packages should implement the split ports.
+
+`Tile3D` uses numeric enums for selection, readiness, presentation, metadata, content kind and refinement. `NO_METADATA` is the numeric sentinel `-1`. Metadata snapshots live in `RuntimeMetadataStore` and are exposed to adapters through numeric handles.
 
 The content adapter returns one of three outcomes:
 
@@ -45,7 +58,7 @@ For REPLACE refinement, the parent remains presented until every visible item on
 
 ## Camera and frame processing
 
-An `ICameraEventSource` may push camera placements. Applications may also call `TileRuntime.update` directly. Camera values are opaque to the traversal and interpreted only by `ISpatialMetric`.
+An `ICameraFrameSource` may push camera placements. Applications may also call `onCameraChanged(cameraFrame, flags)` and then `processFrame()`. The camera frame carries the frustum consumed by `ISpatialMetric`. Camera values remain opaque to traversal.
 
 The runtime serializes frame processing and coalesces refreshes caused by asynchronous loads. `whenIdle()` waits for both the loading scheduler and the resulting traversal refreshes.
 
@@ -67,18 +80,18 @@ Selected tiles, attached content, active replacement fronts, queued or running l
 
 ```ts
 const runtime = new TileRuntime({
-    id: "mine",
-    uri: "https://example.test/tileset.json",
-    adapter,
-    cache: {
-        maxMaterializedTiles: 4096,
-        maxContentEntries: 512,
-        maxContentCpuBytes: 512 * 1024 * 1024,
-        maxContentGpuBytes: 1024 * 1024 * 1024,
-        maxSubtreeEntries: 128,
-        maxSubtreeBytes: 64 * 1024 * 1024,
-        unusedFrameRetention: 120,
-    },
+  id: "mine",
+  uri: "https://example.test/tileset.json",
+  adapter,
+  cache: {
+    maxMaterializedTiles: 4096,
+    maxContentEntries: 512,
+    maxContentCpuBytes: 512 * 1024 * 1024,
+    maxContentGpuBytes: 1024 * 1024 * 1024,
+    maxSubtreeEntries: 128,
+    maxSubtreeBytes: 64 * 1024 * 1024,
+    unusedFrameRetention: 120,
+  },
 });
 ```
 
@@ -90,7 +103,7 @@ const runtime = new TileRuntime({
 
 ```ts
 const unsubscribe = runtime.instrumentation.subscribe((statistics) => {
-    dashboard.update(statistics);
+  dashboard.update(statistics);
 });
 
 const current = runtime.instrumentation.snapshot();
@@ -122,11 +135,13 @@ Implicit tiling is implemented as a native traversal path, not as a pre-generate
 
 ### Web Map and DEM pyramids
 
-`createWebMapImplicitSource` and `WebMercatorTileResolver` adapt an XYZ or TMS pyramid to the same implicit traversal. They handle the direction of the Web Map Y axis, compute exact Web Mercator latitude bounds for every tile and resolve `{z}/{x}/{y}` URLs.
+`ITileDataSource` defines the physical pyramid. It owns its `ITileMetrics`, absolute root address, URL templates and metadata policy. `WebMapTileDataSource` implements that contract for XYZ or TMS, while `WebMercatorTileMetrics` provides addressing, ground resolution and the authoritative `minLOD` and `maxLOD` bounds.
 
-This spatial override matters because standard 3D Tiles `region` subdivision is linear in latitude, while Web Mercator tile rows are not. The adapter keeps 3D Tiles availability and traversal semantics while supplying the exact per-tile `TILE_BOUNDING_REGION` equivalent at runtime.
+`ImplicitTilesetDecorator` is deliberately limited to representation. It exposes a data source as a standard implicit 3D Tiles tileset and delegates per-tile resolution back to the source. Its `availableLevels` is derived as `maxLOD - minLOD + 1`, so traversal cannot materialize a source LOD beyond its declared range. `createWebMapImplicitSource` is a convenience factory for this source-plus-decorator composition.
 
-The content port receives `implicitCoordinates`, the synthesized tile bounding volume and the derived spatial state. A Babylon terrain adapter can therefore use the content URI as a DEM texture, instance a shared grid mesh, bind a dedicated displacement shader and pool GPU resources across attach, detach and dispose operations. The generic runtime does not create Babylon meshes or shaders.
+This spatial override matters because standard 3D Tiles `region` subdivision is linear in latitude, while Web Mercator tile rows are not. The source and decorator keep 3D Tiles availability and traversal semantics while supplying the exact per-tile `TILE_BOUNDING_REGION` equivalent at runtime.
+
+The content port receives `implicitCoordinates`, the synthesized tile bounding volume and the derived spatial state. A Babylon terrain adapter can therefore share normalized grid topology while projecting unique per-tile geometry from the geographic region and the selected ellipsoid. Curvature and east-west pinching then follow latitude exactly. A later GPU implementation can bind the region, ellipsoid and DEM as per-instance shader inputs, while keeping the same runtime ports and pooling resources across presentation, hiding and release. The generic runtime does not create Babylon meshes or shaders.
 
 ## Hooks and specialization
 

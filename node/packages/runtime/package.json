@@ -56,6 +56,11 @@
             "import": "./dist/metadata/index.js",
             "default": "./dist/metadata/index.js"
         },
+        "./pipeline": {
+            "types": "./dist/pipeline/index.d.ts",
+            "import": "./dist/pipeline/index.js",
+            "default": "./dist/pipeline/index.js"
+        },
         "./spatial": {
             "types": "./dist/spatial/index.d.ts",
             "import": "./dist/spatial/index.js",

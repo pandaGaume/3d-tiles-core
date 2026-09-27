@@ -1,5 +1,7 @@
 import type { IBoundingVolume, IContent, IImplicitTiling, IMetadataEntity, IMetadataSchema, ISubtree, ITile } from "@spacexr/3d-tiles-core";
 
+import type { TileReadinessState } from "../pipeline/states";
+
 export interface IImplicitCoordinates {
     level: number;
     x: number;
@@ -71,7 +73,7 @@ export interface IImplicitMetadataDecoder {
     decode(request: IImplicitMetadataDecodeRequest): IImplicitMetadataDecodeResult;
 }
 
-export type ImplicitSubtreeStatus = "idle" | "queued" | "loading" | "ready" | "error" | "cancelled";
+export type ImplicitSubtreeStatus = TileReadinessState;
 
 export interface IRuntimeImplicitContext {
     id: string;

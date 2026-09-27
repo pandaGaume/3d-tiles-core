@@ -1,11 +1,13 @@
 import type { IContent, ITile, ITileset } from "@spacexr/3d-tiles-core";
 
-import type { IMetadataDocumentContext, IMetadataSnapshot, IRuntimeFeatureMetadata } from "../metadata/types";
-import type { IImplicitCoordinates, IRuntimeImplicitTile } from "../implicit/types";
+import type { IMetadataDocumentContext, IRuntimeFeatureMetadata } from "../metadata/types";
+import type { IImplicitCoordinates } from "../implicit/types";
 import type { IRuntimeResourceCost } from "./cache";
+import type { Tile3D } from "../pipeline/tile-3d";
+import type { MetadataHandle, TileContentKind, TileReadinessState } from "../pipeline/states";
 
-export type RuntimeContentStatus = "idle" | "queued" | "loading" | "ready" | "error" | "cancelled";
-export type RuntimeContentKind = "unknown" | "renderable" | "external-tileset" | "empty";
+export type RuntimeContentStatus = TileReadinessState;
+export type RuntimeContentKind = TileContentKind;
 
 export interface IRuntimeTilesetDocument {
     id: string;
@@ -29,26 +31,13 @@ export interface IRuntimeContent<TContentHandle> {
     error?: unknown;
     attached: boolean;
     lastTouchedFrame: number;
+    readyFrame: number;
+    metadataHandle: MetadataHandle;
+    featureMetadataHandle: MetadataHandle;
+    readonly ready: boolean;
 }
 
-export interface IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle> {
-    id: string;
-    source: ITile;
-    document: IRuntimeTilesetDocument;
-    parent?: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>;
-    children: Array<IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>;
-    depth: number;
-    refine: "ADD" | "REPLACE";
-    spatial: TSpatial;
-    implicit?: IRuntimeImplicitTile;
-    contents: Array<IRuntimeContent<TContentHandle>>;
-    visible: boolean;
-    selected: boolean;
-    screenSpaceError: number;
-    glyphHandles: Array<TGlyphHandle>;
-    metadataSnapshots: readonly IMetadataSnapshot[];
-    lastTouchedFrame: number;
-}
+export type IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle> = Tile3D<TSpatial, TContentHandle, TGlyphHandle>;
 
 export interface ITileContext<TSpatial> {
     runtimeId: string;

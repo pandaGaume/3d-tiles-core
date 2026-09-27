@@ -17,6 +17,10 @@
             "path": "node/examples/babylon-google-3d-tiles"
         },
         {
+            "name": "🔷 Babylon Implicit Grid",
+            "path": "node/examples/babylon-implicit-geodesic-grid"
+        },
+        {
             "name": "🌐 Geodesy",
             "path": "../geodesy_ts"
         },
@@ -121,6 +125,25 @@
                 },
                 "isBackground": true,
                 "problemMatcher": []
+            },
+            {
+                "label": "Babylon Implicit Grid: dev",
+                "type": "shell",
+                "command": "npm run dev",
+                "options": {
+                    "cwd": "${workspaceFolder:🔷 Babylon Implicit Grid}"
+                },
+                "isBackground": true,
+                "problemMatcher": []
+            },
+            {
+                "label": "Babylon Implicit Grid: build",
+                "type": "shell",
+                "command": "npm run build",
+                "options": {
+                    "cwd": "${workspaceFolder:🔷 Babylon Implicit Grid}"
+                },
+                "problemMatcher": ["$tsc"]
             },
             {
                 "label": "Babylon Google 3D Tiles: dev",

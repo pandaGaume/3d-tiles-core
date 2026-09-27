@@ -17,6 +17,19 @@ import type {
 } from "../implicit/types";
 import { MetadataResolver } from "../metadata/metadata-resolver";
 import type { IMetadataAncestorInput, IMetadataDiagnostic, IMetadataSnapshot } from "../metadata/types";
+import { RuntimeMetadataStore } from "../pipeline/metadata-store";
+import type { ITilePresentationContext, ITileReadinessPort } from "../pipeline/ports";
+import {
+    CameraChangeFlags,
+    NO_METADATA,
+    TileContentKind,
+    TileMetadataState,
+    TilePresentationState,
+    TileReadinessState,
+    TileRefinementMode,
+    TileSelectionState,
+} from "../pipeline/states";
+import { Tile3D, Tile3DContent } from "../pipeline/tile-3d";
 import type {
     IContentLoadContext,
     ContentLoadResult,
@@ -99,6 +112,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     public readonly adapter: IRuntimeAdapter<TCamera, TSpatial, TContentHandle, TGlyphHandle>;
     public readonly events = new RuntimeEventHub<TSpatial, TContentHandle, TGlyphHandle>();
     public readonly instrumentation: RuntimeInstrumentation;
+    public readonly metadataStore = new RuntimeMetadataStore();
 
     private readonly maxScreenSpaceError: number;
     private readonly maxScreenSpaceErrorForDepth: ((depth: number, defaultValue: number) => number) | undefined;
@@ -123,6 +137,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     private readonly nodes = new Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>();
     private readonly refiningNodes = new Set<string>();
     private readonly replacementFrontNodes = new Set<string>();
+    private readonly activeThisFrame = new Set<string>();
     private selectedAtFrameStart: Array<IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>> = [];
 
     private rootNode?: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>;
@@ -131,6 +146,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     private startPromise?: Promise<void>;
     private updateChain: Promise<void> = Promise.resolve();
     private lastCamera?: TCamera;
+    private pendingCamera: TCamera | undefined;
+    private pendingCameraChanges = CameraChangeFlags.None;
+    private currentCameraChanges = CameraChangeFlags.None;
+    private cameraDirty = false;
     private frame = 0;
     private disposed = false;
     private refreshNeeded = false;
@@ -139,6 +158,12 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         this.id = options.id;
         this.uri = options.uri;
         this.adapter = options.adapter;
+        if (!options.adapter.content && !options.adapter.activation) {
+            throw new Error("A content adapter or a tile activation adapter is required.");
+        }
+        if (!options.adapter.content && !options.adapter.presentation) {
+            throw new Error("A content adapter or a tile presentation adapter is required.");
+        }
         this.maxScreenSpaceError = options.maxScreenSpaceError ?? 16;
         this.maxScreenSpaceErrorForDepth = options.maxScreenSpaceErrorForDepth;
         this.refinementHysteresisRatio = options.refinementHysteresisRatio ?? 0.1;
@@ -172,11 +197,15 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         // frames while they are unresolved only ages the cache and repeats the
         // same cut. Their settlement calls markDirty(), which requests exactly
         // one new frame.
-        return this.refreshNeeded;
+        return this.refreshNeeded || this.cameraDirty;
     }
 
     public get selectedTiles(): readonly IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>[] {
         return [...this.nodes.values()].filter((node) => node.selected);
+    }
+
+    public get cameraChanges(): CameraChangeFlags {
+        return this.currentCameraChanges;
     }
 
     /** Immediately applies cache budgets. With force=true, every inactive cache entry is released. */
@@ -201,15 +230,48 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     }
 
     public update(camera: TCamera): Promise<IRuntimeFrameResult<TSpatial, TContentHandle, TGlyphHandle>> {
+        this.pendingCamera = undefined;
+        this.pendingCameraChanges = CameraChangeFlags.None;
+        this.cameraDirty = false;
+        return this.enqueueUpdate(camera, CameraChangeFlags.All);
+    }
+
+    private enqueueUpdate(
+        camera: TCamera,
+        changes: CameraChangeFlags,
+    ): Promise<IRuntimeFrameResult<TSpatial, TContentHandle, TGlyphHandle>> {
         const operation = this.updateChain.then(async () => {
             await this.start();
-            return this.performUpdate(camera);
+            this.currentCameraChanges = changes;
+            try {
+                return await this.performUpdate(camera);
+            } finally {
+                this.currentCameraChanges = CameraChangeFlags.None;
+            }
         });
         this.updateChain = operation.then(
             () => undefined,
             () => undefined,
         );
         return operation;
+    }
+
+    /** Stores the latest immutable camera frame without starting a traversal. */
+    public onCameraChanged(camera: TCamera, changes: CameraChangeFlags = CameraChangeFlags.All): void {
+        this.pendingCamera = camera;
+        this.pendingCameraChanges |= changes;
+        this.cameraDirty = true;
+    }
+
+    /** Consumes the latest camera snapshot and runs at most one serialized pipeline frame. */
+    public processFrame(): Promise<IRuntimeFrameResult<TSpatial, TContentHandle, TGlyphHandle>> {
+        const camera = this.pendingCamera ?? this.lastCamera;
+        if (camera === undefined) throw new Error("A camera frame must be provided before processing the runtime pipeline.");
+        const changes = this.pendingCameraChanges;
+        this.pendingCamera = undefined;
+        this.pendingCameraChanges = CameraChangeFlags.None;
+        this.cameraDirty = false;
+        return this.enqueueUpdate(camera, changes);
     }
 
     public async whenIdle(): Promise<void> {
@@ -238,6 +300,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         this.refiningNodes.clear();
         this.replacementFrontNodes.clear();
         this.selectedAtFrameStart = [];
+        this.activeThisFrame.clear();
+        this.metadataStore.clear();
         this.events.clear();
         this.instrumentation.clear();
     }
@@ -264,8 +328,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         const requested: IRuntimeContent<TContentHandle>[] = [];
         this.selectedAtFrameStart = [...this.nodes.values()].filter((node) => node.selected);
         this.replacementFrontNodes.clear();
+        this.activeThisFrame.clear();
         for (const node of this.nodes.values()) node.visible = false;
         this.visit(root, camera, desired, requested);
+        await this.deactivatePipelineTilesOutsideWorkingSet();
 
         const entering = [...desired.values()].filter((node) => !node.selected).sort((left, right) => left.depth - right.depth);
         const staying = [...desired.values()].filter((node) => node.selected);
@@ -322,13 +388,15 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             tile: node.source,
             depth: node.depth,
         });
-        if (node.implicit && node.implicit.subtree.status !== "ready") {
+        if (node.implicit && node.implicit.subtree.status !== TileReadinessState.Ready) {
             this.requestImplicitSubtree(node, node.screenSpaceError);
             this.selectNode(node, desired, requested);
             return;
         }
         const threshold = this.maxScreenSpaceErrorForDepth?.(node.depth, this.maxScreenSpaceError) ?? this.maxScreenSpaceError;
-        const hasPotentialPresentation = node.contents.some((content) => content.kind === "unknown" || content.kind === "renderable");
+        const hasPotentialPresentation = node.contents.some(
+            (content) => content.kind === TileContentKind.Unknown || content.kind === TileContentKind.Renderable,
+        );
         const wasRefining = this.refiningNodes.has(node.id);
         const effectiveThreshold = wasRefining ? threshold * (1 - this.refinementHysteresisRatio) : threshold;
         const refinementRequested = node.screenSpaceError > effectiveThreshold || !hasPotentialPresentation;
@@ -350,7 +418,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             return;
         }
 
-        if (node.refine === "ADD") {
+        if (node.refinementMode === TileRefinementMode.Add) {
             this.selectNode(node, desired, requested);
             for (const child of node.children) this.visit(child, camera, desired, requested);
             return;
@@ -384,27 +452,36 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             tile: node.source,
             depth: node.depth,
         });
-        if (node.implicit && node.implicit.subtree.status !== "ready") {
+        if (node.implicit && node.implicit.subtree.status !== TileReadinessState.Ready) {
             this.requestImplicitSubtree(node, node.screenSpaceError);
             return false;
         }
         this.materializeImplicitChildren(node);
-        const potential = node.contents.filter((content) => content.kind === "unknown" || content.kind === "renderable");
+        const potential = node.contents.filter(
+            (content) => content.kind === TileContentKind.Unknown || content.kind === TileContentKind.Renderable,
+        );
         if (potential.length > 0) {
             for (const content of potential) content.lastTouchedFrame = this.frame;
             this.replacementFrontNodes.add(node.id);
             this.requestNodeContents(node, node.screenSpaceError, requested);
-            return potential.every((content) => content.kind === "renderable" && content.status === "ready");
+            return potential.every((content) => content.kind === TileContentKind.Renderable && content.status === TileReadinessState.Ready);
         }
         if (node.children.length === 0) return true;
         return node.children.every((child) => this.collectReplacementFront(child, camera, requested));
     }
 
     private isNodePresentationReady(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): boolean {
-        const potential = node.contents.filter((content) => content.kind === "unknown" || content.kind === "renderable");
+        const potential = node.contents.filter(
+            (content) => content.kind === TileContentKind.Unknown || content.kind === TileContentKind.Renderable,
+        );
         return (
             potential.length > 0 &&
-            potential.every((content) => content.kind === "renderable" && content.status === "ready" && content.handle !== undefined)
+            potential.every(
+                (content) =>
+                    content.kind === TileContentKind.Renderable &&
+                    content.status === TileReadinessState.Ready &&
+                    content.handle !== undefined,
+            )
         );
     }
 
@@ -495,16 +572,171 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         priority: number,
         requested: IRuntimeContent<TContentHandle>[],
     ): void {
+        if (node.contents.length === 0) return;
+        this.activeThisFrame.add(node.id);
+        const entering = node.selectionState !== TileSelectionState.Active;
+        if (entering) {
+            node.selectionState = TileSelectionState.Active;
+            node.activationId++;
+            this.events.emit({ type: "tile-activated", tile: node });
+        }
+
+        if (this.adapter.activation) {
+            this.requestPipelineActivation(node, priority, requested, entering);
+            return;
+        }
+
         for (const content of node.contents) {
-            if (content.kind !== "unknown" && content.kind !== "renderable") continue;
-            if (content.status !== "idle" && content.status !== "error" && content.status !== "cancelled") continue;
+            if (content.kind !== TileContentKind.Unknown && content.kind !== TileContentKind.Renderable) continue;
+            if (
+                content.status !== TileReadinessState.Idle &&
+                content.status !== TileReadinessState.Failed &&
+                content.status !== TileReadinessState.Cancelled
+            )
+                continue;
             if (content.attempts >= this.maxLoadAttempts) continue;
-            content.status = "queued";
+            content.status = TileReadinessState.Queued;
             const added = this.scheduler.enqueue(content.id, priority, (signal) => this.loadContent(node, content, signal));
             if (added) {
                 requested.push(content);
                 this.events.emit({ type: "content-state", tile: node, content });
             }
+        }
+        this.refreshNodeReadiness(node);
+    }
+
+    private requestPipelineActivation(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        priority: number,
+        requested: IRuntimeContent<TContentHandle>[],
+        notifyEvenWhenReady: boolean,
+    ): void {
+        const pending = node.contents.filter(
+            (content) =>
+                (content.kind === TileContentKind.Unknown || content.kind === TileContentKind.Renderable) &&
+                (content.status === TileReadinessState.Idle ||
+                    content.status === TileReadinessState.Failed ||
+                    content.status === TileReadinessState.Cancelled) &&
+                content.attempts < this.maxLoadAttempts,
+        );
+        if (pending.length === 0 && !notifyEvenWhenReady) return;
+        for (const content of pending) content.status = TileReadinessState.Queued;
+        this.refreshNodeReadiness(node);
+        const key = this.pipelineActivationKey(node);
+        const added = this.scheduler.enqueue(key, priority, (signal) => this.activatePipelineTile(node, pending, priority, signal));
+        if (!added) return;
+        for (const content of pending) {
+            requested.push(content);
+            this.events.emit({ type: "content-state", tile: node, content });
+        }
+    }
+
+    private async activatePipelineTile(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        pending: readonly IRuntimeContent<TContentHandle>[],
+        priority: number,
+        signal: AbortSignal,
+    ): Promise<void> {
+        const activation = this.adapter.activation;
+        if (!activation) return;
+        const activationId = node.activationId;
+        const unsettled = new Set(pending.map((content) => content.id));
+        let settleActivation: (() => void) | undefined;
+        const settled = new Promise<void>((resolve) => {
+            settleActivation = resolve;
+        });
+        const finish = (contentId: string): void => {
+            unsettled.delete(contentId);
+            if (unsettled.size === 0) settleActivation?.();
+        };
+        const findPending = (contentId: string): IRuntimeContent<TContentHandle> | undefined =>
+            pending.find((content) => content.id === contentId);
+
+        for (const content of pending) {
+            content.attempts++;
+            content.status = TileReadinessState.Preparing;
+            content.lastTouchedFrame = this.frame;
+            this.events.emit({ type: "content-state", tile: node, content });
+        }
+        this.refreshNodeReadiness(node);
+
+        const readiness: ITileReadinessPort<TContentHandle> = {
+            tileId: node.id,
+            activationId,
+            signal,
+            ready: async (contentId, result) => {
+                const content = findPending(contentId);
+                if (!content || signal.aborted || node.activationId !== activationId) return false;
+                await this.acceptContentResult(node, content, result);
+                content.status = TileReadinessState.Ready;
+                content.readyFrame = this.frame;
+                content.lastTouchedFrame = this.frame;
+                delete content.error;
+                this.events.emit({ type: "content-state", tile: node, content });
+                this.refreshNodeReadiness(node);
+                finish(contentId);
+                this.markDirty();
+                return true;
+            },
+            failed: async (contentId, error) => {
+                const content = findPending(contentId);
+                if (!content || node.activationId !== activationId) return;
+                content.error = error;
+                content.status = TileReadinessState.Failed;
+                this.events.emit({ type: "content-state", tile: node, content });
+                this.refreshNodeReadiness(node);
+                await this.reportError("content.prepare", error, node, content);
+                finish(contentId);
+                this.markDirty();
+            },
+            cancelled: async (contentId) => {
+                const content = findPending(contentId);
+                if (!content) return;
+                content.status = TileReadinessState.Cancelled;
+                this.events.emit({ type: "content-state", tile: node, content });
+                this.refreshNodeReadiness(node);
+                finish(contentId);
+                this.markDirty();
+            },
+        };
+
+        const abort = (): void => {
+            for (const contentId of [...unsettled]) void readiness.cancelled(contentId);
+        };
+        signal.addEventListener("abort", abort, { once: true });
+        try {
+            await activation.activate({
+                runtimeId: this.id,
+                tile: node,
+                pendingContents: pending,
+                priority,
+                activationId,
+                signal,
+                readiness,
+            });
+            if (unsettled.size > 0) await settled;
+        } catch (error) {
+            for (const contentId of [...unsettled]) await readiness.failed(contentId, error);
+        } finally {
+            signal.removeEventListener("abort", abort);
+        }
+    }
+
+    private pipelineActivationKey(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): string {
+        return `activation:${node.id}`;
+    }
+
+    private async deactivatePipelineTilesOutsideWorkingSet(): Promise<void> {
+        for (const node of this.nodes.values()) {
+            if (node.selectionState !== TileSelectionState.Active || this.activeThisFrame.has(node.id)) continue;
+            const activationId = node.activationId;
+            node.activationId++;
+            node.selectionState = TileSelectionState.Inactive;
+            this.scheduler.cancel(this.pipelineActivationKey(node));
+            if (this.adapter.activation) {
+                await this.adapter.activation.deactivate({ runtimeId: this.id, tile: node, activationId });
+            }
+            this.events.emit({ type: "tile-deactivated", tile: node });
         }
     }
 
@@ -515,19 +747,23 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     ): Promise<void> {
         const startedAt = this.startTiming();
         content.attempts++;
-        content.status = "loading";
+        content.status = TileReadinessState.Preparing;
         content.lastTouchedFrame = this.frame;
+        this.refreshNodeReadiness(node);
         this.events.emit({ type: "content-state", tile: node, content });
         const hookContext: IContentHookContext<TSpatial, TContentHandle, TGlyphHandle> = { runtimeId: this.id, tile: node, content };
         await this.invokeHooks("beforeContentLoad", (hook) => hook.beforeContentLoad?.(hookContext), node, content);
         try {
-            const result = await this.adapter.content.load(this.contentLoadContext(node, content), signal);
+            const contentAdapter = this.adapter.content;
+            if (!contentAdapter) throw new Error("The legacy content adapter is not configured.");
+            const result = await contentAdapter.load(this.contentLoadContext(node, content), signal);
             if (signal.aborted) {
-                content.status = "cancelled";
+                content.status = TileReadinessState.Cancelled;
                 return;
             }
             await this.acceptContentResult(node, content, result);
-            content.status = "ready";
+            content.status = TileReadinessState.Ready;
+            content.readyFrame = this.frame;
             content.lastTouchedFrame = this.frame;
             delete content.error;
             this.recordMetric({
@@ -552,9 +788,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             await this.invokeHooks("afterContentLoad", (hook) => hook.afterContentLoad?.({ ...hookContext, result }), node, content);
         } catch (error) {
             content.error = error;
-            content.status = signal.aborted ? "cancelled" : "error";
+            content.status = signal.aborted ? TileReadinessState.Cancelled : TileReadinessState.Failed;
             await this.reportError("content.load", error, node, content);
         } finally {
+            this.refreshNodeReadiness(node);
             this.events.emit({ type: "content-state", tile: node, content });
             this.markDirty();
         }
@@ -565,8 +802,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         content: IRuntimeContent<TContentHandle>,
         result: ContentLoadResult<TContentHandle>,
     ): Promise<void> {
-        content.kind = result.kind;
         if (result.kind === "renderable") {
+            content.kind = TileContentKind.Renderable;
             content.handle = result.handle;
             if (result.cacheKey) content.cacheKey = result.cacheKey;
             else delete content.cacheKey;
@@ -577,6 +814,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             return;
         }
         if (result.kind === "external-tileset") {
+            content.kind = TileContentKind.ExternalTileset;
             const documentUri = result.documentUri ?? content.uri;
             const loaded: ILoadedTileset = {
                 tileset: result.tileset,
@@ -593,48 +831,106 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
                 document,
             };
             await this.invokeHooks("afterTilesetLoad", (hook) => hook.afterTilesetLoad?.(hookContext), node, content);
+            return;
         }
+        content.kind = TileContentKind.Empty;
+    }
+
+    private refreshNodeReadiness(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): void {
+        if (node.contents.length === 0) {
+            node.readinessState = TileReadinessState.Idle;
+            return;
+        }
+        if (node.contents.every((content) => content.status === TileReadinessState.Ready)) {
+            node.readinessState = TileReadinessState.Ready;
+            return;
+        }
+        if (node.contents.some((content) => content.status === TileReadinessState.Preparing)) {
+            node.readinessState = TileReadinessState.Preparing;
+            return;
+        }
+        if (node.contents.some((content) => content.status === TileReadinessState.Queued)) {
+            node.readinessState = TileReadinessState.Queued;
+            return;
+        }
+        if (node.contents.every((content) => content.status === TileReadinessState.Cancelled)) {
+            node.readinessState = TileReadinessState.Cancelled;
+            return;
+        }
+        if (
+            node.contents.every(
+                (content) => content.status === TileReadinessState.Failed || content.status === TileReadinessState.Cancelled,
+            )
+        ) {
+            node.readinessState = TileReadinessState.Failed;
+            return;
+        }
+        node.readinessState = TileReadinessState.Idle;
     }
 
     protected async activateNode(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): Promise<void> {
         const wasSelected = node.selected;
         const readyContents = node.contents.filter(
             (content): content is IRuntimeContent<TContentHandle> & { handle: TContentHandle } =>
-                content.kind === "renderable" && content.status === "ready" && content.handle !== undefined,
+                content.kind === TileContentKind.Renderable && content.status === TileReadinessState.Ready && content.handle !== undefined,
         );
         const hasNewContent = readyContents.some((content) => !content.attached);
         if (wasSelected && !hasNewContent) return;
 
+        const tileSnapshot = await this.resolveMetadata(node);
         const snapshots: IMetadataSnapshot[] = [];
         for (const content of readyContents) {
             const snapshot = await this.resolveMetadata(node, content.descriptor, content.featureMetadata);
             snapshots.push(snapshot);
-            if (content.attached) continue;
-            const presentation = this.presentationContext(node, content, snapshot);
-            const hookContext: IContentHookContext<TSpatial, TContentHandle, TGlyphHandle> = {
-                runtimeId: this.id,
-                tile: node,
-                content,
-                metadata: snapshot,
-            };
-            await this.invokeHooks("beforeContentAttach", (hook) => hook.beforeContentAttach?.(hookContext), node, content);
-            try {
-                await this.adapter.content.attach(presentation);
-                content.attached = true;
-                content.lastTouchedFrame = this.frame;
-                this.recordMetric({
-                    name: "tile.attach",
-                    value: 1,
-                    unit: "count",
-                    tags: { runtime: this.id, tile: node.id },
-                });
-                await this.invokeHooks("afterContentAttach", (hook) => hook.afterContentAttach?.(hookContext), node, content);
-            } catch (error) {
-                await this.reportError("content.attach", error, node, content);
+        }
+        if (snapshots.length === 0) snapshots.push(tileSnapshot);
+        node.metadataSnapshots = snapshots;
+
+        if (this.adapter.presentation) {
+            if (!wasSelected || hasNewContent) {
+                node.presentationState = TilePresentationState.Presenting;
+                try {
+                    await this.adapter.presentation.present(this.pipelinePresentationContext(node, readyContents));
+                    for (const content of readyContents) {
+                        content.attached = true;
+                        content.lastTouchedFrame = this.frame;
+                    }
+                } catch (error) {
+                    node.presentationState = TilePresentationState.Hidden;
+                    await this.reportError("content.present", error, node);
+                    return;
+                }
+            }
+        } else {
+            const contentAdapter = this.adapter.content;
+            if (!contentAdapter) throw new Error("The legacy content adapter is not configured.");
+            for (const content of readyContents) {
+                if (content.attached) continue;
+                const snapshot = this.metadataStore.get(content.metadataHandle);
+                const presentation = this.presentationContext(node, content, snapshot);
+                const hookContext: IContentHookContext<TSpatial, TContentHandle, TGlyphHandle> = {
+                    runtimeId: this.id,
+                    tile: node,
+                    content,
+                    metadata: snapshot,
+                };
+                await this.invokeHooks("beforeContentAttach", (hook) => hook.beforeContentAttach?.(hookContext), node, content);
+                try {
+                    await contentAdapter.attach(presentation);
+                    content.attached = true;
+                    content.lastTouchedFrame = this.frame;
+                    this.recordMetric({
+                        name: "tile.attach",
+                        value: 1,
+                        unit: "count",
+                        tags: { runtime: this.id, tile: node.id },
+                    });
+                    await this.invokeHooks("afterContentAttach", (hook) => hook.afterContentAttach?.(hookContext), node, content);
+                } catch (error) {
+                    await this.reportError("content.attach", error, node, content);
+                }
             }
         }
-        if (snapshots.length === 0) snapshots.push(await this.resolveMetadata(node));
-        node.metadataSnapshots = snapshots;
 
         if (this.adapter.glyphs) {
             if (node.glyphHandles.length > 0) await this.revokeGlyphs(node);
@@ -660,36 +956,50 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     protected async deactivateNode(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): Promise<void> {
         if (!node.selected) return;
         await this.revokeGlyphs(node);
-        for (const content of node.contents) {
-            if (!content.attached || content.handle === undefined) continue;
-            const snapshot =
-                node.metadataSnapshots.find((candidate) => candidate.content === content.descriptor) ??
-                (await this.resolveMetadata(node, content.descriptor));
-            const presentation = this.presentationContext(
-                node,
-                content as IRuntimeContent<TContentHandle> & { handle: TContentHandle },
-                snapshot,
-            );
-            const hookContext: IContentHookContext<TSpatial, TContentHandle, TGlyphHandle> = {
-                runtimeId: this.id,
-                tile: node,
-                content,
-                metadata: snapshot,
-            };
-            await this.invokeHooks("beforeContentDetach", (hook) => hook.beforeContentDetach?.(hookContext), node, content);
+        const attached = node.contents.filter(
+            (content): content is IRuntimeContent<TContentHandle> & { handle: TContentHandle } =>
+                content.attached && content.handle !== undefined,
+        );
+        if (this.adapter.presentation) {
+            node.presentationState = TilePresentationState.Hiding;
             try {
-                await this.adapter.content.detach(presentation);
-                content.attached = false;
-                content.lastTouchedFrame = this.frame;
-                this.recordMetric({
-                    name: "tile.detach",
-                    value: 1,
-                    unit: "count",
-                    tags: { runtime: this.id, tile: node.id },
-                });
-                await this.invokeHooks("afterContentDetach", (hook) => hook.afterContentDetach?.(hookContext), node, content);
+                await this.adapter.presentation.hide(this.pipelinePresentationContext(node, attached));
+                for (const content of attached) {
+                    content.attached = false;
+                    content.lastTouchedFrame = this.frame;
+                }
             } catch (error) {
-                await this.reportError("content.detach", error, node, content);
+                await this.reportError("content.hide", error, node);
+            }
+        } else {
+            const contentAdapter = this.adapter.content;
+            if (!contentAdapter) throw new Error("The legacy content adapter is not configured.");
+            for (const content of attached) {
+                const snapshot =
+                    node.metadataSnapshots.find((candidate) => candidate.content === content.descriptor) ??
+                    (await this.resolveMetadata(node, content.descriptor));
+                const presentation = this.presentationContext(node, content, snapshot);
+                const hookContext: IContentHookContext<TSpatial, TContentHandle, TGlyphHandle> = {
+                    runtimeId: this.id,
+                    tile: node,
+                    content,
+                    metadata: snapshot,
+                };
+                await this.invokeHooks("beforeContentDetach", (hook) => hook.beforeContentDetach?.(hookContext), node, content);
+                try {
+                    await contentAdapter.detach(presentation);
+                    content.attached = false;
+                    content.lastTouchedFrame = this.frame;
+                    this.recordMetric({
+                        name: "tile.detach",
+                        value: 1,
+                        unit: "count",
+                        tags: { runtime: this.id, tile: node.id },
+                    });
+                    await this.invokeHooks("afterContentDetach", (hook) => hook.afterContentDetach?.(hookContext), node, content);
+                } catch (error) {
+                    await this.reportError("content.detach", error, node, content);
+                }
             }
         }
         node.selected = false;
@@ -703,6 +1013,11 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         content?: IContent,
         features?: IRuntimeContent<TContentHandle>["featureMetadata"],
     ): Promise<IMetadataSnapshot> {
+        const runtimeContent = content ? node.contents.find((candidate) => candidate.descriptor === content) : undefined;
+        const existingHandle = runtimeContent?.metadataHandle ?? node.metadataHandle;
+        const existing = this.metadataStore.tryGet(existingHandle);
+        if (existing) return existing;
+        node.metadataState = TileMetadataState.Resolving;
         const tileContext: ITileHookContext<TSpatial, TContentHandle, TGlyphHandle> = { runtimeId: this.id, tile: node };
         await this.invokeHooks("beforeMetadataResolve", (hook) => hook.beforeMetadataResolve?.(tileContext), node);
         const ancestors: IMetadataAncestorInput[] = [];
@@ -711,23 +1026,39 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             ancestors.unshift({ id: parent.id, tile: parent.source, document: parent.document.metadata });
             parent = parent.parent;
         }
-        const snapshot = this.metadataResolver.resolve({
-            document: node.document.metadata,
-            tileId: node.id,
-            tile: node.source,
-            ancestors,
-            ...(node.implicit?.subtree.loaded?.subtree.subtreeMetadata
-                ? {
-                      subtree: {
-                          id: node.implicit.subtree.uri,
-                          entity: node.implicit.subtree.loaded.subtree.subtreeMetadata,
-                          documentUri: node.implicit.subtree.uri,
-                      },
-                  }
-                : {}),
-            ...(content ? { content } : {}),
-            ...(features ? { features } : {}),
-        });
+        let snapshot: IMetadataSnapshot;
+        try {
+            snapshot = this.metadataResolver.resolve({
+                document: node.document.metadata,
+                tileId: node.id,
+                tile: node.source,
+                ancestors,
+                ...(node.implicit?.subtree.loaded?.subtree.subtreeMetadata
+                    ? {
+                          subtree: {
+                              id: node.implicit.subtree.uri,
+                              entity: node.implicit.subtree.loaded.subtree.subtreeMetadata,
+                              documentUri: node.implicit.subtree.uri,
+                          },
+                      }
+                    : {}),
+                ...(content ? { content } : {}),
+                ...(features ? { features } : {}),
+            });
+        } catch (error) {
+            node.metadataState = TileMetadataState.Failed;
+            throw error;
+        }
+        const metadataHandle = this.metadataStore.register(snapshot);
+        if (content) {
+            if (runtimeContent) {
+                runtimeContent.metadataHandle = metadataHandle;
+                if (features && features.length > 0) runtimeContent.featureMetadataHandle = metadataHandle;
+            }
+        } else {
+            node.metadataHandle = metadataHandle;
+        }
+        node.metadataState = TileMetadataState.Ready;
         for (const diagnostic of snapshot.diagnostics) {
             this.recordMetric({
                 name: "metadata.diagnostic",
@@ -761,7 +1092,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             await this.invokeHooks("afterTilesetLoad", (hook) => hook.afterTilesetLoad?.(loadedContext));
             this.events.emit({ type: "tileset-ready", document });
             const cameraSubscription = this.adapter.camera?.subscribe((camera) => {
-                void this.update(camera).catch((error) => this.reportError("camera.update", error));
+                this.onCameraChanged(camera);
+                void this.processFrame().catch((error) => this.reportError("camera.update", error));
             });
             if (cameraSubscription) this.cameraSubscription = cameraSubscription;
             const currentCamera = this.adapter.camera?.current?.();
@@ -859,35 +1191,35 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         }
         const spatial = this.adapter.spatial.derive({ tile: source, ...(parent ? { parent: parent.spatial } : {}) });
         const descriptors = implicitState ? [] : source.contents ? [...source.contents] : source.content ? [source.content] : [];
-        const node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle> = {
+        const refinementMode =
+            source.refine === "ADD"
+                ? TileRefinementMode.Add
+                : source.refine === "REPLACE"
+                  ? TileRefinementMode.Replace
+                  : (parent?.refinementMode ?? TileRefinementMode.Replace);
+        const contents = descriptors.map(
+            (descriptor, index) =>
+                new Tile3DContent<TContentHandle>(
+                    `${id}/content-${index}`,
+                    descriptor,
+                    this.uriResolver.resolve(descriptor.uri, document.baseUri),
+                    this.frame,
+                ),
+        );
+        const node = new Tile3D<TSpatial, TContentHandle, TGlyphHandle>({
             id,
             source,
             document,
             ...(parent ? { parent } : {}),
             ...(implicitState ? { implicit: implicitState } : {}),
-            children: [],
             depth: parent ? parent.depth + 1 : 0,
-            refine: source.refine ?? parent?.refine ?? "REPLACE",
+            refinementMode,
             spatial,
-            contents: descriptors.map((descriptor, index) => ({
-                id: `${id}/content-${index}`,
-                descriptor,
-                uri: this.uriResolver.resolve(descriptor.uri, document.baseUri),
-                status: "idle",
-                kind: "unknown",
-                attempts: 0,
-                attached: false,
-                lastTouchedFrame: this.frame,
-            })),
-            visible: false,
-            selected: false,
-            screenSpaceError: 0,
-            glyphHandles: [],
-            metadataSnapshots: [],
-            lastTouchedFrame: this.frame,
-        };
+            contents,
+            frame: this.frame,
+        });
         this.nodes.set(id, node);
-        if (implicitState?.subtree.status === "ready") this.applyImplicitContents(node);
+        if (implicitState?.subtree.status === TileReadinessState.Ready) this.applyImplicitContents(node);
         for (let index = 0; index < (source.children?.length ?? 0); index++) {
             const child = source.children?.[index];
             if (child) node.children.push(this.createNode(child, document, node, String(index)));
@@ -904,7 +1236,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         return {
             uri: this.uriResolver.resolve(reference, document.baseUri),
             coordinates,
-            status: "idle",
+            status: TileReadinessState.Idle,
             attempts: 0,
             estimatedBytes: 0,
             lastTouchedFrame: this.frame,
@@ -975,32 +1307,36 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         if (implicit.context.contentTemplates.length === 1) node.source.content = available[0]!.descriptor;
         else node.source.contents = available.map(({ descriptor }) => descriptor) as [IContent, ...IContent[]];
         for (const { descriptor, index } of available) {
-            node.contents.push({
-                id: `${node.id}/content-${index}`,
-                descriptor,
-                uri: this.uriResolver.resolve(descriptor.uri, node.document.baseUri),
-                status: "idle",
-                kind: "unknown",
-                attempts: 0,
-                attached: false,
-                lastTouchedFrame: this.frame,
-            });
+            node.contents.push(
+                new Tile3DContent<TContentHandle>(
+                    `${node.id}/content-${index}`,
+                    descriptor,
+                    this.uriResolver.resolve(descriptor.uri, node.document.baseUri),
+                    this.frame,
+                ),
+            );
         }
+        this.refreshNodeReadiness(node);
     }
 
     private requestImplicitSubtree(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>, priority: number): void {
         const implicit = node.implicit;
         if (!implicit) return;
         const subtree = implicit.subtree;
-        if (subtree.status !== "idle" && subtree.status !== "error" && subtree.status !== "cancelled") return;
+        if (
+            subtree.status !== TileReadinessState.Idle &&
+            subtree.status !== TileReadinessState.Failed &&
+            subtree.status !== TileReadinessState.Cancelled
+        )
+            return;
         if (subtree.attempts >= this.maxLoadAttempts) return;
-        subtree.status = "queued";
+        subtree.status = TileReadinessState.Queued;
         subtree.lastTouchedFrame = this.frame;
         this.events.emit({ type: "subtree-state", tile: node, subtree });
         const key = `subtree:${implicit.context.id}:${subtree.coordinates.level}:${subtree.coordinates.x}:${subtree.coordinates.y}:${subtree.coordinates.z ?? 0}`;
         this.scheduler.enqueue(key, priority, async (signal) => {
             const startedAt = this.startTiming();
-            subtree.status = "loading";
+            subtree.status = TileReadinessState.Preparing;
             subtree.attempts++;
             this.events.emit({ type: "subtree-state", tile: node, subtree });
             const hookContext: ISubtreeHookContext<TSpatial, TContentHandle, TGlyphHandle> = {
@@ -1021,7 +1357,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
                     signal,
                 });
                 if (signal.aborted) {
-                    subtree.status = "cancelled";
+                    subtree.status = TileReadinessState.Cancelled;
                     return;
                 }
                 const availability = new LoadedSubtreeAvailability(loaded, implicit.context.implicitTiling);
@@ -1037,7 +1373,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
                 subtree.availability = availability;
                 subtree.estimatedBytes = this.estimateSubtreeBytes(loaded);
                 subtree.lastTouchedFrame = this.frame;
-                subtree.status = "ready";
+                subtree.status = TileReadinessState.Ready;
                 delete subtree.error;
                 this.applyImplicitContents(node);
                 await this.invokeHooks("afterSubtreeLoad", (hook) => hook.afterSubtreeLoad?.({ ...hookContext, loaded }), node);
@@ -1056,7 +1392,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
                 });
             } catch (error) {
                 subtree.error = error;
-                subtree.status = signal.aborted ? "cancelled" : "error";
+                subtree.status = signal.aborted ? TileReadinessState.Cancelled : TileReadinessState.Failed;
                 await this.reportError("subtree.load", error, node);
             } finally {
                 this.events.emit({ type: "subtree-state", tile: node, subtree });
@@ -1067,7 +1403,13 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
 
     private materializeImplicitChildren(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): void {
         const implicit = node.implicit;
-        if (!implicit || implicit.childrenMaterialized || implicit.subtree.status !== "ready" || !implicit.subtree.availability) return;
+        if (
+            !implicit ||
+            implicit.childrenMaterialized ||
+            implicit.subtree.status !== TileReadinessState.Ready ||
+            !implicit.subtree.availability
+        )
+            return;
         implicit.subtree.lastTouchedFrame = this.frame;
         implicit.childrenMaterialized = true;
         const tiling = implicit.context.implicitTiling;
@@ -1139,6 +1481,23 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         return { ...this.contentLoadContext(node, content), handle: content.handle, metadata };
     }
 
+    private pipelinePresentationContext(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        contents: readonly (IRuntimeContent<TContentHandle> & { handle: TContentHandle })[],
+    ): ITilePresentationContext<TSpatial, TContentHandle, TGlyphHandle> {
+        return {
+            runtimeId: this.id,
+            tile: node,
+            resources: contents.map((content) => ({
+                content,
+                handle: content.handle,
+                metadataHandle: content.metadataHandle,
+            })),
+            tileMetadataHandle: node.metadataHandle,
+            metadataStore: this.metadataStore,
+        };
+    }
+
     private glyphContext(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): IGlyphPublicationContext<TSpatial, TContentHandle> {
         return {
             ...this.tileContext(node),
@@ -1190,7 +1549,12 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         let gpuBytes = 0;
         for (const node of this.nodes.values()) {
             for (const candidate of node.contents) {
-                if (candidate.handle === undefined || candidate.kind !== "renderable" || candidate.status !== "ready") continue;
+                if (
+                    candidate.handle === undefined ||
+                    candidate.kind !== TileContentKind.Renderable ||
+                    candidate.status !== TileReadinessState.Ready
+                )
+                    continue;
                 entries++;
                 cpuBytes += candidate.cost?.cpuBytes ?? 0;
                 gpuBytes += candidate.cost?.gpuBytes ?? 0;
@@ -1199,6 +1563,11 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
                 // swap and must not be evicted while the current traversal is
                 // waiting for its siblings.
                 if (node.selected || candidate.attached || this.replacementFrontNodes.has(node.id)) continue;
+                // A resource can settle during an awaited phase of the same
+                // traversal that requested it. Keep it until the next cut can
+                // consume it, otherwise a tight cache budget causes an
+                // immediate load, evict, reload loop.
+                if (candidate.readyFrame === this.frame) continue;
                 candidates.push({
                     node,
                     content: candidate as IRuntimeContent<TContentHandle> & { handle: TContentHandle },
@@ -1277,7 +1646,9 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             if (existing) existing.users.push(node);
             else bySubtree.set(subtree, { node, subtree, users: [node] });
         }
-        const loaded = [...bySubtree.values()].filter((entry) => entry.subtree.status === "ready" && entry.subtree.loaded !== undefined);
+        const loaded = [...bySubtree.values()].filter(
+            (entry) => entry.subtree.status === TileReadinessState.Ready && entry.subtree.loaded !== undefined,
+        );
         let entries = loaded.length;
         let bytes = loaded.reduce((total, entry) => total + entry.subtree.estimatedBytes, 0);
         const candidates = loaded
@@ -1298,13 +1669,16 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     }
 
     private isSubtreeProtected(entry: ISubtreeCacheEntry<TSpatial, TContentHandle, TGlyphHandle>): boolean {
-        if (entry.subtree.status === "queued" || entry.subtree.status === "loading") return true;
+        if (entry.subtree.status === TileReadinessState.Queued || entry.subtree.status === TileReadinessState.Preparing) return true;
         return entry.users.some(
             (node) =>
                 node.selected ||
                 node.lastTouchedFrame === this.frame ||
                 node.glyphHandles.length > 0 ||
-                node.contents.some((content) => content.attached || content.status === "queued" || content.status === "loading"),
+                node.contents.some(
+                    (content) =>
+                        content.attached || content.status === TileReadinessState.Queued || content.status === TileReadinessState.Preparing,
+                ),
         );
     }
 
@@ -1331,7 +1705,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         delete entry.subtree.loaded;
         delete entry.subtree.availability;
         delete entry.subtree.error;
-        entry.subtree.status = "idle";
+        entry.subtree.status = TileReadinessState.Idle;
         entry.subtree.attempts = 0;
         entry.subtree.estimatedBytes = 0;
         this.cacheCounters.subtreeEvictions++;
@@ -1400,7 +1774,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
                 node.selected ||
                 node.lastTouchedFrame === this.frame ||
                 node.glyphHandles.length > 0 ||
-                node.contents.some((content) => content.attached || content.status === "queued" || content.status === "loading"),
+                node.contents.some(
+                    (content) =>
+                        content.attached || content.status === TileReadinessState.Queued || content.status === TileReadinessState.Preparing,
+                ),
         );
     }
 
@@ -1466,11 +1843,15 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         content: IRuntimeContent<TContentHandle> & { handle: TContentHandle },
     ): Promise<void> {
         try {
-            if (this.adapter.content.dispose) {
+            const presentationAdapter = this.adapter.presentation;
+            const contentAdapter = this.adapter.content;
+            if (presentationAdapter?.release) {
+                await presentationAdapter.release(this.pipelinePresentationContext(node, [content]));
+            } else if (contentAdapter?.dispose) {
                 const snapshot =
                     node.metadataSnapshots.find((candidate) => candidate.content === content.descriptor) ??
                     (await this.resolveMetadata(node, content.descriptor));
-                await this.adapter.content.dispose(this.presentationContext(node, content, snapshot));
+                await contentAdapter.dispose(this.presentationContext(node, content, snapshot));
             }
         } catch (error) {
             await this.reportError("content.dispose", error, node, content);
@@ -1481,10 +1862,18 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             delete releasedContent.cacheKey;
             delete releasedContent.cost;
             delete releasedContent.error;
-            releasedContent.status = "idle";
-            releasedContent.kind = "unknown";
+            this.metadataStore.release(releasedContent.metadataHandle);
+            if (releasedContent.featureMetadataHandle !== releasedContent.metadataHandle) {
+                this.metadataStore.release(releasedContent.featureMetadataHandle);
+            }
+            releasedContent.metadataHandle = NO_METADATA;
+            releasedContent.featureMetadataHandle = NO_METADATA;
+            releasedContent.status = TileReadinessState.Idle;
+            releasedContent.kind = TileContentKind.Unknown;
             releasedContent.attempts = 0;
             releasedContent.attached = false;
+            releasedContent.readyFrame = -1;
+            this.refreshNodeReadiness(node);
         }
     }
 
@@ -1523,7 +1912,26 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         for (const node of nodes) {
             for (const content of node.contents) {
                 contentStatistics.total++;
-                contentStatistics[content.status]++;
+                switch (content.status) {
+                    case TileReadinessState.Idle:
+                        contentStatistics.idle++;
+                        break;
+                    case TileReadinessState.Queued:
+                        contentStatistics.queued++;
+                        break;
+                    case TileReadinessState.Preparing:
+                        contentStatistics.loading++;
+                        break;
+                    case TileReadinessState.Ready:
+                        contentStatistics.ready++;
+                        break;
+                    case TileReadinessState.Failed:
+                        contentStatistics.error++;
+                        break;
+                    case TileReadinessState.Cancelled:
+                        contentStatistics.cancelled++;
+                        break;
+                }
                 if (content.attached) contentStatistics.attached++;
                 if (content.handle !== undefined) contentStatistics.cached++;
                 contentStatistics.cpuBytes += content.cost?.cpuBytes ?? 0;
@@ -1545,7 +1953,26 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             bytes: 0,
         };
         for (const subtree of subtrees) {
-            subtreeStatistics[subtree.status]++;
+            switch (subtree.status) {
+                case TileReadinessState.Idle:
+                    subtreeStatistics.idle++;
+                    break;
+                case TileReadinessState.Queued:
+                    subtreeStatistics.queued++;
+                    break;
+                case TileReadinessState.Preparing:
+                    subtreeStatistics.loading++;
+                    break;
+                case TileReadinessState.Ready:
+                    subtreeStatistics.ready++;
+                    break;
+                case TileReadinessState.Failed:
+                    subtreeStatistics.error++;
+                    break;
+                case TileReadinessState.Cancelled:
+                    subtreeStatistics.cancelled++;
+                    break;
+            }
             if (subtree.loaded) subtreeStatistics.cached++;
             subtreeStatistics.bytes += subtree.estimatedBytes;
         }

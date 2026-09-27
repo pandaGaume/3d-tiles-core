@@ -8,6 +8,8 @@ export type RuntimeEvent<TSpatial, TContentHandle, TGlyphHandle> =
     | { type: "frame"; result: IRuntimeFrameResult<TSpatial, TContentHandle, TGlyphHandle> }
     | { type: "tile-selected"; tile: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle> }
     | { type: "tile-deselected"; tile: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle> }
+    | { type: "tile-activated"; tile: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle> }
+    | { type: "tile-deactivated"; tile: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle> }
     | {
           type: "content-state";
           tile: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>;
