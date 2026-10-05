@@ -1,47 +1,47 @@
-import type { BoundingVolume } from "./bounding-volume";
-import type { NonEmptyArray, RootProperty } from "./common";
-import type { ImplicitTiling } from "./implicit-tiling";
-import type { GroupMetadata, LegacyPropertyRange, MetadataEntity, MetadataSchema, Statistics } from "./metadata";
+import type { IBoundingVolume } from "./bounding-volume";
+import type { NonEmptyArray, IRootProperty } from "./common";
+import type { IImplicitTiling } from "./implicit-tiling";
+import type { IGroupMetadata, ILegacyPropertyRange, IMetadataEntity, IMetadataSchema, IStatistics } from "./metadata";
 
 export type TileTransform = [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number];
 
 export type Refinement = "ADD" | "REPLACE";
 
-export interface Asset extends RootProperty {
+export interface IAsset extends IRootProperty {
     version: string;
     tilesetVersion?: string;
 }
 
-export interface Content extends RootProperty {
-    boundingVolume?: BoundingVolume;
+export interface IContent extends IRootProperty {
+    boundingVolume?: IBoundingVolume;
     uri: string;
-    metadata?: MetadataEntity;
+    metadata?: IMetadataEntity;
     group?: number;
 }
 
-export interface Tile extends RootProperty {
-    boundingVolume: BoundingVolume;
-    viewerRequestVolume?: BoundingVolume;
+export interface ITile extends IRootProperty {
+    boundingVolume: IBoundingVolume;
+    viewerRequestVolume?: IBoundingVolume;
     geometricError: number;
     refine?: Refinement;
     transform?: TileTransform;
-    content?: Content;
-    contents?: NonEmptyArray<Content>;
-    metadata?: MetadataEntity;
-    implicitTiling?: ImplicitTiling;
-    children?: NonEmptyArray<Tile>;
+    content?: IContent;
+    contents?: NonEmptyArray<IContent>;
+    metadata?: IMetadataEntity;
+    implicitTiling?: IImplicitTiling;
+    children?: NonEmptyArray<ITile>;
 }
 
-export interface Tileset extends RootProperty {
-    asset: Asset;
-    properties?: Record<string, LegacyPropertyRange>;
-    schema?: MetadataSchema;
+export interface ITileset extends IRootProperty {
+    asset: IAsset;
+    properties?: Record<string, ILegacyPropertyRange>;
+    schema?: IMetadataSchema;
     schemaUri?: string;
-    statistics?: Statistics;
-    groups?: NonEmptyArray<GroupMetadata>;
-    metadata?: MetadataEntity;
+    statistics?: IStatistics;
+    groups?: NonEmptyArray<IGroupMetadata>;
+    metadata?: IMetadataEntity;
     geometricError: number;
-    root: Tile;
+    root: ITile;
     extensionsUsed?: NonEmptyArray<string>;
     extensionsRequired?: NonEmptyArray<string>;
 }

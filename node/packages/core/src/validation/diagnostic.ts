@@ -1,14 +1,14 @@
 export type DiagnosticSeverity = "error" | "warning";
 
-export interface Diagnostic {
+export interface IDiagnostic {
     code: string;
     severity: DiagnosticSeverity;
     path: string;
     message: string;
 }
 
-export interface ValidationResult<T> {
+export interface IValidationResult<T> {
     valid: boolean;
-    diagnostics: Diagnostic[];
+    diagnostics: IDiagnostic[];
     value?: T;
 }

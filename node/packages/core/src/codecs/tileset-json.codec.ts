@@ -1,11 +1,11 @@
-import type { Tileset } from "../model";
-import { validateTileset, type Diagnostic } from "../validation";
-import type { Codec, DecodeOptions, EncodeOptions } from "./codec";
+import type { ITileset } from "../model";
+import { validateTileset, type IDiagnostic } from "../validation";
+import type { ICodec, IDecodeOptions, IEncodeOptions } from "./codec";
 
 export class TilesetCodecError extends Error {
-    public readonly diagnostics: readonly Diagnostic[];
+    public readonly diagnostics: readonly IDiagnostic[];
 
-    public constructor(message: string, diagnostics: readonly Diagnostic[] = [], options?: ErrorOptions) {
+    public constructor(message: string, diagnostics: readonly IDiagnostic[] = [], options?: ErrorOptions) {
         super(message, options);
         this.name = "TilesetCodecError";
         this.diagnostics = diagnostics;
@@ -22,8 +22,8 @@ function indentation(pretty: boolean | number | undefined): number | undefined {
     return undefined;
 }
 
-export class TilesetJsonCodec implements Codec<Tileset> {
-    public decode(input: string | Uint8Array, options: DecodeOptions = {}): Tileset {
+export class TilesetJsonCodec implements ICodec<ITileset> {
+    public decode(input: string | Uint8Array, options: IDecodeOptions = {}): ITileset {
         let value: unknown;
         try {
             value = JSON.parse(decodeText(input)) as unknown;
@@ -31,7 +31,7 @@ export class TilesetJsonCodec implements Codec<Tileset> {
             throw new TilesetCodecError("The tileset is not valid UTF-8 JSON.", [], { cause: error });
         }
 
-        if (options.validate === false) return value as Tileset;
+        if (options.validate === false) return value as ITileset;
         const result = validateTileset(value);
         if (!result.valid || !result.value) {
             throw new TilesetCodecError("The tileset failed structural validation.", result.diagnostics);
@@ -39,7 +39,7 @@ export class TilesetJsonCodec implements Codec<Tileset> {
         return result.value;
     }
 
-    public encode(value: Tileset, options: EncodeOptions = {}): string {
+    public encode(value: ITileset, options: IEncodeOptions = {}): string {
         if (options.validate !== false) {
             const result = validateTileset(value);
             if (!result.valid) {

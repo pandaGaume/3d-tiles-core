@@ -1,0 +1,235 @@
+{
+  "suite": "SPACEXR_bounding_volume_utm extension",
+  "cases": [
+    {
+      "id": "nad83-elevation",
+      "path": "positive/nad83-elevation.json",
+      "valid": true,
+      "expectedCodes": []
+    },
+    {
+      "id": "nad83-csrs-depth-below-ground",
+      "path": "positive/nad83-csrs-depth-below-ground.json",
+      "valid": true,
+      "expectedCodes": []
+    },
+    {
+      "id": "ground-depth-without-elevation",
+      "path": "positive/ground-depth-without-elevation.json",
+      "valid": true,
+      "expectedCodes": [
+        "GROUND_ELEVATION_MISSING"
+      ]
+    },
+    {
+      "id": "zone-without-epsg",
+      "path": "positive/zone-without-epsg.json",
+      "valid": true,
+      "expectedCodes": [
+        "UTM_EPSG_MISSING"
+      ]
+    },
+    {
+      "id": "unrecognized-epsg-with-zone",
+      "path": "positive/unrecognized-epsg-with-zone.json",
+      "valid": true,
+      "expectedCodes": []
+    },
+    {
+      "id": "southern-hemisphere",
+      "path": "positive/southern-hemisphere.json",
+      "valid": true,
+      "expectedCodes": []
+    },
+    {
+      "id": "standard-box-fallback",
+      "path": "positive/standard-box-fallback.json",
+      "valid": true,
+      "expectedCodes": []
+    },
+    {
+      "id": "easting-out-of-range",
+      "path": "positive/easting-out-of-range.json",
+      "valid": true,
+      "expectedCodes": [
+        "UTM_EASTING_OUT_OF_RANGE"
+      ]
+    },
+    {
+      "id": "northing-out-of-range",
+      "path": "positive/northing-out-of-range.json",
+      "valid": true,
+      "expectedCodes": [
+        "UTM_NORTHING_OUT_OF_RANGE"
+      ]
+    },
+    {
+      "id": "not-an-object",
+      "path": "negative/not-an-object.json",
+      "valid": false,
+      "expectedCodes": [
+        "INVALID_UTM_BOUNDING_VOLUME"
+      ]
+    },
+    {
+      "id": "reference-missing",
+      "path": "negative/reference-missing.json",
+      "valid": false,
+      "expectedCodes": [
+        "UTM_REFERENCE_MISSING"
+      ]
+    },
+    {
+      "id": "invalid-epsg",
+      "path": "negative/invalid-epsg.json",
+      "valid": false,
+      "expectedCodes": [
+        "INVALID_UTM_EPSG"
+      ]
+    },
+    {
+      "id": "invalid-zone",
+      "path": "negative/invalid-zone.json",
+      "valid": false,
+      "expectedCodes": [
+        "INVALID_UTM_ZONE"
+      ]
+    },
+    {
+      "id": "invalid-hemisphere",
+      "path": "negative/invalid-hemisphere.json",
+      "valid": false,
+      "expectedCodes": [
+        "INVALID_UTM_HEMISPHERE"
+      ]
+    },
+    {
+      "id": "incomplete-zone",
+      "path": "negative/incomplete-zone.json",
+      "valid": false,
+      "expectedCodes": [
+        "INCOMPLETE_UTM_ZONE"
+      ]
+    },
+    {
+      "id": "epsg-zone-mismatch",
+      "path": "negative/epsg-zone-mismatch.json",
+      "valid": false,
+      "expectedCodes": [
+        "UTM_EPSG_ZONE_MISMATCH"
+      ]
+    },
+    {
+      "id": "zone-required",
+      "path": "negative/zone-required.json",
+      "valid": false,
+      "expectedCodes": [
+        "UTM_ZONE_REQUIRED"
+      ]
+    },
+    {
+      "id": "invalid-coordinate",
+      "path": "negative/invalid-coordinate.json",
+      "valid": false,
+      "expectedCodes": [
+        "INVALID_UTM_COORDINATE"
+      ]
+    },
+    {
+      "id": "extent-order",
+      "path": "negative/extent-order.json",
+      "valid": false,
+      "expectedCodes": [
+        "INVALID_UTM_EXTENT_ORDER"
+      ]
+    },
+    {
+      "id": "vertical-missing",
+      "path": "negative/vertical-missing.json",
+      "valid": false,
+      "expectedCodes": [
+        "INVALID_VERTICAL_EXTENT"
+      ]
+    },
+    {
+      "id": "vertical-reference",
+      "path": "negative/vertical-reference.json",
+      "valid": false,
+      "expectedCodes": [
+        "INVALID_VERTICAL_REFERENCE"
+      ]
+    },
+    {
+      "id": "vertical-direction",
+      "path": "negative/vertical-direction.json",
+      "valid": false,
+      "expectedCodes": [
+        "INVALID_VERTICAL_DIRECTION"
+      ]
+    },
+    {
+      "id": "vertical-bound",
+      "path": "negative/vertical-bound.json",
+      "valid": false,
+      "expectedCodes": [
+        "INVALID_VERTICAL_BOUND"
+      ]
+    },
+    {
+      "id": "vertical-order",
+      "path": "negative/vertical-order.json",
+      "valid": false,
+      "expectedCodes": [
+        "INVALID_VERTICAL_ORDER"
+      ]
+    },
+    {
+      "id": "vertical-epsg",
+      "path": "negative/vertical-epsg.json",
+      "valid": false,
+      "expectedCodes": [
+        "INVALID_VERTICAL_EPSG"
+      ]
+    },
+    {
+      "id": "ground-elevation-invalid",
+      "path": "negative/ground-elevation-invalid.json",
+      "valid": false,
+      "expectedCodes": [
+        "INVALID_GROUND_ELEVATION"
+      ]
+    },
+    {
+      "id": "ground-elevation-reference-mismatch",
+      "path": "negative/ground-elevation-reference-mismatch.json",
+      "valid": false,
+      "expectedCodes": [
+        "GROUND_ELEVATION_REFERENCE_MISMATCH"
+      ]
+    },
+    {
+      "id": "extension-not-declared",
+      "path": "negative/extension-not-declared.json",
+      "valid": false,
+      "expectedCodes": [
+        "EXTENSION_NOT_DECLARED"
+      ]
+    },
+    {
+      "id": "extension-not-required",
+      "path": "negative/extension-not-required.json",
+      "valid": false,
+      "expectedCodes": [
+        "BOUNDING_VOLUME_EXTENSION_NOT_REQUIRED"
+      ]
+    },
+    {
+      "id": "empty-bounding-volume",
+      "path": "negative/empty-bounding-volume.json",
+      "valid": false,
+      "expectedCodes": [
+        "BOUNDING_VOLUME_CARDINALITY"
+      ]
+    }
+  ]
+}

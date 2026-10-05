@@ -1,0 +1,27 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "lib": ["ES2022", "DOM"],
+        "strict": true,
+        "noImplicitOverride": true,
+        "exactOptionalPropertyTypes": true,
+        "esModuleInterop": true,
+        "forceConsistentCasingInFileNames": true,
+        "skipLibCheck": true,
+        "declaration": true,
+        "declarationMap": true,
+        "sourceMap": true,
+        "resolveJsonModule": true,
+        "baseUrl": ".",
+        "paths": {
+            "@spacexr/3d-tiles-core": ["../core/src/index.ts"],
+            "@spacexr/3d-tiles-core/*": ["../core/src/*"],
+            "@spacexr/tiles": ["../tiles/src/index.ts"],
+            "@spacexr/tiles/*": ["../tiles/src/*"]
+        },
+        "types": ["node", "vitest/globals"]
+    },
+    "include": ["src/**/*.ts", "tests/**/*.ts", "tsup.config.ts", "vitest.config.ts"]
+}

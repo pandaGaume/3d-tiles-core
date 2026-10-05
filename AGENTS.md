@@ -11,16 +11,18 @@ Read this file before modifying the repository.
 
 ## Current scope
 
-The current package contains serializable 3D Tiles interfaces, JSON codecs and structural validation. It does not contain a renderer, a fetch client or mutable streaming state.
+The core package contains serializable 3D Tiles interfaces, JSON codecs and structural validation. The runtime package contains renderer-neutral traversal and mutable streaming state behind explicit ports.
 
 Keep these layers separate:
 
 1. Wire model: values that can appear in a 3D Tiles resource.
 2. Codec: lossless JSON parsing and serialization.
 3. Validation: diagnostics about a resource.
-4. Runtime: traversal, loading and rendering, to be added later behind explicit ports.
+4. Runtime: traversal, loading and presentation lifecycle behind explicit ports.
 
 Never add runtime fields such as parent links, loading status, scene objects or cached transforms to the wire interfaces.
+
+All TypeScript interfaces use an uppercase `I` prefix, for example `ITileset`, `IRuntimeAdapter` and `IRuntimeMetric`.
 
 ## Node commands
 
@@ -43,4 +45,3 @@ npm run check
 ## Release
 
 The Node package uses `node-v*` tags. Publication is performed by the GitHub Actions release workflow with npm trusted publishing.
-

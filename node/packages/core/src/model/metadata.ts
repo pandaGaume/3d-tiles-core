@@ -1,4 +1,4 @@
-import type { NonEmptyArray, RootProperty } from "./common";
+import type { NonEmptyArray, IRootProperty } from "./common";
 
 export type MetadataType = "SCALAR" | "VEC2" | "VEC3" | "VEC4" | "MAT2" | "MAT3" | "MAT4" | "STRING" | "BOOLEAN" | "ENUM";
 
@@ -10,7 +10,7 @@ export type MetadataScalarValue = number | string | boolean;
 
 export type MetadataValue = MetadataScalarValue | MetadataValue[];
 
-export interface MetadataClassProperty extends RootProperty {
+export interface IMetadataClassProperty extends IRootProperty {
     name?: string;
     description?: string;
     type: MetadataType;
@@ -29,45 +29,45 @@ export interface MetadataClassProperty extends RootProperty {
     semantic?: string;
 }
 
-export interface MetadataClass extends RootProperty {
+export interface IMetadataClass extends IRootProperty {
     name?: string;
     description?: string;
-    properties?: Record<string, MetadataClassProperty>;
+    properties?: Record<string, IMetadataClassProperty>;
 }
 
-export interface MetadataEnumValue extends RootProperty {
+export interface IMetadataEnumValue extends IRootProperty {
     name: string;
     description?: string;
     value: number;
 }
 
-export interface MetadataEnum extends RootProperty {
+export interface IMetadataEnum extends IRootProperty {
     name?: string;
     description?: string;
     valueType?: MetadataIntegerComponentType;
-    values: NonEmptyArray<MetadataEnumValue>;
+    values: NonEmptyArray<IMetadataEnumValue>;
 }
 
-export interface MetadataSchema extends RootProperty {
+export interface IMetadataSchema extends IRootProperty {
     id: string;
     name?: string;
     description?: string;
     version?: string;
-    classes?: Record<string, MetadataClass>;
-    enums?: Record<string, MetadataEnum>;
+    classes?: Record<string, IMetadataClass>;
+    enums?: Record<string, IMetadataEnum>;
 }
 
-export interface MetadataEntity extends RootProperty {
+export interface IMetadataEntity extends IRootProperty {
     class: string;
     properties?: Record<string, MetadataValue>;
 }
 
-export interface GroupMetadata extends MetadataEntity {
+export interface IGroupMetadata extends IMetadataEntity {
     name?: string;
     description?: string;
 }
 
-export interface PropertyStatistics extends RootProperty {
+export interface IPropertyStatistics extends IRootProperty {
     min?: MetadataValue;
     max?: MetadataValue;
     mean?: number;
@@ -78,17 +78,17 @@ export interface PropertyStatistics extends RootProperty {
     occurrences?: Record<string, number>;
 }
 
-export interface ClassStatistics extends RootProperty {
+export interface IClassStatistics extends IRootProperty {
     count: number;
-    properties?: Record<string, PropertyStatistics>;
+    properties?: Record<string, IPropertyStatistics>;
 }
 
-export interface Statistics extends RootProperty {
-    classes?: Record<string, ClassStatistics>;
+export interface IStatistics extends IRootProperty {
+    classes?: Record<string, IClassStatistics>;
     enums?: Record<string, Record<string, number>>;
 }
 
-export interface LegacyPropertyRange extends RootProperty {
+export interface ILegacyPropertyRange extends IRootProperty {
     minimum: number;
     maximum: number;
 }

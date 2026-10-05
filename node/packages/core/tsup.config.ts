@@ -5,6 +5,7 @@ export default defineConfig({
         index: "src/index.ts",
         "model/index": "src/model/index.ts",
         "codecs/index": "src/codecs/index.ts",
+        "extensions/index": "src/extensions/index.ts",
         "validation/index": "src/validation/index.ts",
     },
     format: ["esm"],

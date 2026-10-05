@@ -1,24 +1,24 @@
-import type { NonEmptyArray, RootProperty } from "./common";
-import type { MetadataComponentType, MetadataEntity, MetadataValue } from "./metadata";
+import type { NonEmptyArray, IRootProperty } from "./common";
+import type { MetadataComponentType, IMetadataEntity, MetadataValue } from "./metadata";
 
-export interface Availability extends RootProperty {
+export interface IAvailability extends IRootProperty {
     constant?: 0 | 1;
     bitstream?: number;
     availableCount?: number;
 }
 
-export interface SubtreeBuffer extends RootProperty {
+export interface ISubtreeBuffer extends IRootProperty {
     uri?: string;
     byteLength: number;
 }
 
-export interface SubtreeBufferView extends RootProperty {
+export interface ISubtreeBufferView extends IRootProperty {
     buffer: number;
     byteOffset?: number;
     byteLength: number;
 }
 
-export interface PropertyTableProperty extends RootProperty {
+export interface IPropertyTableProperty extends IRootProperty {
     values: number;
     arrayOffsets?: number;
     stringOffsets?: number;
@@ -30,23 +30,23 @@ export interface PropertyTableProperty extends RootProperty {
     min?: MetadataValue;
 }
 
-export interface PropertyTable extends RootProperty {
+export interface IPropertyTable extends IRootProperty {
     name?: string;
     class: string;
     count: number;
-    properties?: Record<string, PropertyTableProperty>;
+    properties?: Record<string, IPropertyTableProperty>;
 }
 
-export interface Subtree extends RootProperty {
-    buffers?: NonEmptyArray<SubtreeBuffer>;
-    bufferViews?: NonEmptyArray<SubtreeBufferView>;
-    propertyTables?: NonEmptyArray<PropertyTable>;
-    tileAvailability: Availability;
-    contentAvailability?: NonEmptyArray<Availability>;
-    childSubtreeAvailability: Availability;
+export interface ISubtree extends IRootProperty {
+    buffers?: NonEmptyArray<ISubtreeBuffer>;
+    bufferViews?: NonEmptyArray<ISubtreeBufferView>;
+    propertyTables?: NonEmptyArray<IPropertyTable>;
+    tileAvailability: IAvailability;
+    contentAvailability?: NonEmptyArray<IAvailability>;
+    childSubtreeAvailability: IAvailability;
     tileMetadata?: number;
     contentMetadata?: NonEmptyArray<number>;
-    subtreeMetadata?: MetadataEntity;
+    subtreeMetadata?: IMetadataEntity;
 }
 
 /** Retained as a named alias for clients that map binary metadata components. */
