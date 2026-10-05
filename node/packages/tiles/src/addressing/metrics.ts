@@ -79,7 +79,7 @@ export class WebMercatorTileMetrics implements ITileMetrics {
 
     public constructor(
         options: IWebMercatorTileMetricsOptions,
-        private readonly geodeticSystem = GeodeticSystem.WGS84,
+        private readonly geodeticSystem = GeodeticSystem.WGS84
     ) {
         if (!Number.isInteger(options.minLOD) || !Number.isInteger(options.maxLOD) || options.minLOD < 0 || options.maxLOD < options.minLOD)
             throw new RangeError("Tile metrics require integer LOD bounds with 0 <= minLOD <= maxLOD.");
@@ -113,7 +113,10 @@ export class WebMercatorTileMetrics implements ITileMetrics {
 
     public getLatLonToTileXY(latitudeDegrees: number, longitudeDegrees: number, levelOfDetail: number): ICartesian2 {
         const point = this.getLatLonToPointXY(latitudeDegrees, longitudeDegrees, levelOfDetail);
-        return this.getPointXYToTileXY(point.x, point.y);
+        const tile = this.getPointXYToTileXY(point.x, point.y);
+        // The east and south map edges belong to the last tile, not to a tile beyond the pyramid.
+        const lastTile = 2 ** levelOfDetail - 1;
+        return { x: Math.min(tile.x, lastTile), y: Math.min(tile.y, lastTile) };
     }
 
     public getTileXYToLatLon(x: number, y: number, levelOfDetail: number): IGeographic2 {

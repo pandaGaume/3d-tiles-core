@@ -126,4 +126,61 @@ describe("numeric tile pipeline", () => {
         expect(runtime.root?.metadataHandle).not.toBe(NO_METADATA);
         await runtime.dispose();
     });
+
+    it("re-derives the tile spatial state from a bounding volume measured on its content", async () => {
+        const region: ITileset = {
+            asset: { version: "1.1" },
+            geometricError: 0,
+            root: {
+                boundingVolume: { region: [0, 0, 0.1, 0.1, 0, 0] },
+                geometricError: 0,
+                content: { uri: "dem://root" },
+            },
+        };
+        const derivedHeights: number[][] = [];
+        const refined: string[] = [];
+        const adapter: IRuntimeAdapter<ICamera, ISpatial, IHandle, never> = {
+            tilesets: { load: async () => ({ tileset: region }) },
+            spatial: {
+                derive: (context) => {
+                    const heights = context.tile.boundingVolume.region!.slice(4);
+                    derivedHeights.push(heights);
+                    return { value: heights[1]! };
+                },
+                isVisible: () => true,
+                screenSpaceError: () => 0,
+            },
+            activation: {
+                activate: async (context) => {
+                    for (const content of context.pendingContents) {
+                        await context.readiness.ready(content.id, {
+                            kind: "renderable",
+                            handle: { id: content.id },
+                            tileBoundingVolume: { region: [0, 0, 0.1, 0.1, 1035, 4808] },
+                        });
+                    }
+                },
+                deactivate: () => undefined,
+            },
+            presentation: { present: () => undefined, hide: () => undefined, release: () => undefined },
+        };
+        const runtime = new TileRuntime({ id: "dem", uri: "memory://tileset.json", adapter });
+        runtime.events.subscribe((event) => {
+            if (event.type === "tile-bounds-refined") refined.push(event.tile.id);
+        });
+
+        runtime.onCameraChanged({ value: 1 }, CameraChangeFlags.All);
+        await runtime.processFrame();
+        await runtime.whenIdle();
+
+        expect(derivedHeights).toEqual([
+            [0, 0],
+            [1035, 4808],
+        ]);
+        expect(runtime.root?.spatial).toEqual({ value: 4808 });
+        expect(refined).toEqual(["dem/root"]);
+        // The serialized tile keeps its declared volume.
+        expect(region.root.boundingVolume.region).toEqual([0, 0, 0.1, 0.1, 0, 0]);
+        await runtime.dispose();
+    });
 });

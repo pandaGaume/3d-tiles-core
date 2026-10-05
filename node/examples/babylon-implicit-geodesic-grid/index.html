@@ -19,7 +19,21 @@
       <span id="memory-statistics"></span>
       <span id="cleanup-statistics"></span>
       <span id="renderer-statistics"></span>
+      <span id="frame-statistics"></span>
+      <label id="vertical-scale-control">
+        Altitude scale
+        <input
+          id="vertical-scale"
+          type="range"
+          min="0"
+          max="10"
+          step="0.5"
+          value="1"
+        />
+        <output id="vertical-scale-value" for="vertical-scale">x1</output>
+      </label>
     </aside>
+    <small id="attribution"></small>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

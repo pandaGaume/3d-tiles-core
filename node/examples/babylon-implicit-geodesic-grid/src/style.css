@@ -76,3 +76,28 @@ body,
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+
+#attribution {
+  position: fixed;
+  right: 8px;
+  bottom: 6px;
+  max-width: min(60ch, calc(100vw - 16px));
+  color: rgb(255 255 255 / 70%);
+  font:
+    11px/1.3 system-ui,
+    sans-serif;
+  text-align: right;
+  pointer-events: none;
+}
+
+#vertical-scale-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+#vertical-scale-control input {
+  flex: 1;
+  min-width: 0;
+}

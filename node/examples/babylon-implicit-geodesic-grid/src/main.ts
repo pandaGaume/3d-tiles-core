@@ -3,7 +3,9 @@ import "./style.css";
 import { GeospatialClippingBehavior } from "@babylonjs/core/Behaviors/Cameras/geospatialClippingBehavior.js";
 import { GeospatialCamera } from "@babylonjs/core/Cameras/geospatialCamera.js";
 import { Engine } from "@babylonjs/core/Engines/engine.js";
-import { Color4 } from "@babylonjs/core/Maths/math.color.js";
+import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight.js";
+import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight.js";
+import { Color3, Color4 } from "@babylonjs/core/Maths/math.color.js";
 import { Vector2, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import { Scene } from "@babylonjs/core/scene.js";
 import {
@@ -16,12 +18,19 @@ import {
     type IRuntimeAdapter,
 } from "@spacexr/3d-tiles-runtime";
 import { GeodeticSystem } from "@spacexr/geodesy";
+import {
+    WorkerDemDecoder,
+    createMapzenTerrariumSource,
+    type IDemWorkerEndpoint,
+} from "@spacexr/tiles";
 
 import {
     BabylonGeodesicGridPipeline,
     type IBabylonGeodesicGridHandle,
 } from "./babylon-geodesic-grid-pipeline";
 import { BabylonRuntimeMonitor } from "./babylon-runtime-monitor";
+import { ChildHeightRanges } from "./child-height-ranges";
+import DemDecoderWorker from "./dem-decoder.worker?worker";
 import { createGeodesicGridSource } from "./grid-source";
 import { createEcefCameraFrame } from "./spatial";
 
@@ -52,6 +61,10 @@ async function run(): Promise<void> {
         "renderer-statistics",
         HTMLSpanElement,
     );
+    const frameStatistics = requiredElement(
+        "frame-statistics",
+        HTMLSpanElement,
+    );
     const tileLabels = requiredElement("tile-labels", HTMLDivElement);
     const engine = new Engine(
         canvas,
@@ -65,12 +78,47 @@ async function run(): Promise<void> {
     scene.skipPointerMovePicking = true;
 
     const geodeticSystem = GeodeticSystem.WGS84;
-    const source = createGeodesicGridSource();
-    const monitoringEnabled =
-        new URLSearchParams(window.location.search).get("monitor") !== "0";
-    const solidRendering =
-        new URLSearchParams(window.location.search).get("solid") === "1";
-    const initialCenter = geodeticSystem.geodeticDegreesToEcef(48.25, 2.35, 0);
+    const parameters = new URLSearchParams(window.location.search);
+    const monitoringEnabled = parameters.get("monitor") !== "0";
+    const solidRendering = parameters.get("solid") === "1";
+    const elevationEnabled = parameters.get("elevation") !== "0";
+    const verticalScaleInput = requiredElement(
+        "vertical-scale",
+        HTMLInputElement,
+    );
+    const verticalScaleValue = requiredElement(
+        "vertical-scale-value",
+        HTMLOutputElement,
+    );
+    const initialScale = Number(
+        parameters.get("scale") ?? parameters.get("exaggeration") ?? "1",
+    );
+    if (!Number.isFinite(initialScale) || initialScale < 0)
+        throw new RangeError("The scale parameter must be non-negative.");
+    let verticalScale = initialScale;
+    const dem = elevationEnabled ? createMapzenTerrariumSource() : undefined;
+    const childHeightRanges = new ChildHeightRanges();
+    // Tiles start at 0/0. Each DEM reports the tile range and prepares the ranges of its four children.
+    const source = createGeodesicGridSource(
+        dem
+            ? { ranges: childHeightRanges, verticalScale: () => verticalScale }
+            : undefined,
+    );
+    if (dem)
+        requiredElement("attribution", HTMLElement).textContent =
+            dem.source.attribution ?? "";
+
+    // Mont Blanc summit, 4808 m.
+    const montBlanc = {
+        latitude: 45.832622,
+        longitude: 6.865175,
+        height: 4808,
+    };
+    const initialCenter = geodeticSystem.geodeticDegreesToEcef(
+        montBlanc.latitude,
+        montBlanc.longitude,
+        dem ? montBlanc.height * verticalScale : 0,
+    );
     const camera = new GeospatialCamera("geographic-camera", scene, {
         planetRadius: geodeticSystem.ellipsoid.semiMajorAxis,
     });
@@ -87,8 +135,8 @@ async function run(): Promise<void> {
         initialCenter.y,
         initialCenter.z,
     );
-    camera.radius = 1_600_000;
-    camera.pitch = Math.PI / 5;
+    camera.radius = Number(parameters.get("radius") ?? "25000");
+    camera.pitch = (Number(parameters.get("pitch") ?? "60") * Math.PI) / 180;
     camera.yaw = 0;
     camera.limits.radiusMin = 500;
     camera.limits.radiusMax = geodeticSystem.ellipsoid.semiMajorAxis * 2;
@@ -96,9 +144,67 @@ async function run(): Promise<void> {
     camera.addBehavior(new GeospatialClippingBehavior());
     camera.attachControl(true);
 
+    if (solidRendering) {
+        // Sun from the north-west, 45 degrees above the Mont Blanc horizon.
+        const { east, north, up } =
+            geodeticSystem.createLocalTangentPlaneDegrees(
+                montBlanc.latitude,
+                montBlanc.longitude,
+            ).basis;
+        const toSun = new Vector3(
+            up.x + (north.x - east.x) * Math.SQRT1_2,
+            up.y + (north.y - east.y) * Math.SQRT1_2,
+            up.z + (north.z - east.z) * Math.SQRT1_2,
+        ).normalize();
+        const sun = new DirectionalLight("sun", toSun.negate(), scene);
+        sun.intensity = 1.1;
+        const sky = new HemisphericLight(
+            "sky",
+            new Vector3(up.x, up.y, up.z),
+            scene,
+        );
+        sky.intensity = 0.25;
+        sky.groundColor = new Color3(0.1, 0.1, 0.12);
+    }
+
     const pipeline = new BabylonGeodesicGridPipeline(scene, tileLabels, {
         wireframe: !solidRendering,
+        ...(dem
+            ? {
+                  elevation: {
+                      dem,
+                      // PNG and elevation decoding take about 60 ms per tile; workers keep it off the render loop.
+                      demDecoder: new WorkerDemDecoder(
+                          Array.from(
+                              {
+                                  length: Math.max(
+                                      1,
+                                      Math.min(
+                                          4,
+                                          (navigator.hardwareConcurrency || 2) -
+                                              1,
+                                      ),
+                                  ),
+                              },
+                              () =>
+                                  new DemDecoderWorker() as unknown as IDemWorkerEndpoint,
+                          ),
+                      ),
+                      verticalScale,
+                      childHeightRanges,
+                  },
+              }
+            : {}),
     });
+    verticalScaleInput.value = String(verticalScale);
+    verticalScaleValue.value = `x${verticalScale}`;
+    verticalScaleInput.disabled = !dem;
+    verticalScaleInput.addEventListener("input", () => {
+        verticalScale = Number(verticalScaleInput.value);
+        verticalScaleValue.value = `x${verticalScale}`;
+        pipeline.setVerticalScale(verticalScale);
+    });
+
     const adapter: IRuntimeAdapter<
         IEcefCameraFrame,
         IEcefSpatialState,
@@ -137,6 +243,7 @@ async function run(): Promise<void> {
             memory: memoryStatistics,
             cleanup: cleanupStatistics,
             renderer: rendererStatistics,
+            frame: frameStatistics,
         },
         { enabled: monitoringEnabled },
     );

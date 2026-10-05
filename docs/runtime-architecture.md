@@ -18,7 +18,7 @@ The runtime owns the algorithm. The adaptation layer owns host integration.
 | External tileset grafting                     | Yes                                | Decodes or identifies the external tileset               |
 | Implicit QUADTREE and OCTREE traversal        | Yes                                | Loads subtree resources through `IImplicitSubtreeLoader` |
 | Standard JSON and binary `.subtree` resources | Yes                                | Supplies bytes through `IByteResourceLoader`             |
-| XYZ or TMS Web Map and DEM pyramids           | Yes                                | Selects the URL template and decodes tile payloads       |
+| XYZ or TMS Web Map and DEM pyramids           | Yes                                | Fetches and decodes payloads with `@spacexr/tiles`       |
 | URI identity and relative resolution          | Yes, through `IRuntimeUriResolver` | May override resolution                                  |
 | glTF, terrain or grid preparation             | No                                 | `ITileActivationAdapter` and its readiness port          |
 | Scene attachment and placement                | No                                 | `ITilePresentationAdapter.present`                       |
@@ -55,6 +55,15 @@ The content adapter returns one of three outcomes:
 The runtime does not infer content type from a filename extension. This preserves compatibility with extensionless 3D Tiles content URLs and signed endpoints.
 
 For REPLACE refinement, the parent remains presented until every visible item on the replacement front is loaded. New children are attached before the parent is detached.
+
+## Content-measured bounds
+
+A declared bounding volume may be a placeholder, for example a terrain tile declared at 0/0 m whose real height range is only known once its DEM is decoded. Two mechanisms keep culling and refinement correct without modifying the serialized tiles:
+
+1. The renderable result passed to `ITileReadinessPort.ready` may carry `tileBoundingVolume`, the volume of the whole tile measured on its content. The runtime re-derives the tile spatial state from it and marks the tile `contentBoundsRefined`.
+2. When the content of an implicit tile becomes ready, the runtime asks the implicit resolver again for the volumes of its materialized children and re-derives their spatial state, except for children already marked `contentBoundsRefined`. A resolver can therefore prepare child volumes from the parent content, for example the four quadrant height ranges of a DEM, even for children materialized before that content arrived.
+
+Both emit a `tile-bounds-refined` event whose `origin` is `content` or `parent-content`.
 
 ## Camera and frame processing
 
@@ -188,4 +197,4 @@ The resolved `IMetadataSnapshot` is passed to content attachment and glyph publi
 
 ## Current boundary
 
-The generic runtime owns traversal, availability and resource lifecycle. Rendering, glTF decoding, image or DEM decoding, terrain grid creation, shader selection and engine-specific resource pooling remain responsibilities of an adaptation package such as a future `@spacexr/3d-tiles-babylon`.
+The generic runtime owns traversal, availability and resource lifecycle. Web tile addressing, HTTP tile sources and DEM decoding live in the renderer-neutral `@spacexr/tiles` package, which adapters call from their activation port. Rendering, glTF decoding, terrain grid creation, shader selection and engine-specific resource pooling remain responsibilities of an adaptation package such as a future `@spacexr/3d-tiles-babylon`.

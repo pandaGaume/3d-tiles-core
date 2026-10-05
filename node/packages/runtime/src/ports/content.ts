@@ -1,4 +1,4 @@
-import type { IContent, ITileset } from "@spacexr/3d-tiles-core";
+import type { IBoundingVolume, IContent, ITileset } from "@spacexr/3d-tiles-core";
 
 import type { IMetadataSnapshot, IRuntimeFeatureMetadata } from "../metadata/types";
 import type { IRuntimeResourceCost } from "../runtime/cache";
@@ -20,6 +20,14 @@ export type ContentLoadResult<TContentHandle> =
           cacheKey?: string;
           /** Adapter-reported footprint used by the runtime cache budgets and statistics. */
           cost?: IRuntimeResourceCost;
+          /**
+           * Bounding volume of the whole tile measured from the loaded content, for example the
+           * height range of a DEM tile. The runtime re-derives the tile spatial state from it, so
+           * culling and refinement use the measured extent instead of the declared one. The
+           * serialized tile is not modified. A tile with several contents must report a volume
+           * enclosing all of them.
+           */
+          tileBoundingVolume?: IBoundingVolume;
       }
     | {
           kind: "external-tileset";

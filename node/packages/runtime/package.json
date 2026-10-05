@@ -82,7 +82,8 @@
     },
     "dependencies": {
         "@spacexr/3d-tiles-core": "0.1.0",
-        "@spacexr/geodesy": "0.2.0"
+        "@spacexr/geodesy": "0.2.0",
+        "@spacexr/tiles": "0.1.0"
     },
     "devDependencies": {
         "@types/node": "^20.11.0",

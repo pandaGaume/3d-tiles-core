@@ -1,4 +1,5 @@
 import type { IContent, IMetadataEntity, ITileset } from "@spacexr/3d-tiles-core";
+import { expandTileUrlTemplate, toTmsY, validateTileUrlTemplate, type ITileUrlTemplateOptions } from "@spacexr/tiles";
 
 import {
     ImplicitTilesetDecorator,
@@ -10,9 +11,14 @@ import {
 import { WebMercatorTileMetrics, type ITileMetrics } from "./metrics";
 import type { IImplicitCoordinates } from "./types";
 
+/**
+ * Row convention of the data source addresses and of the `{y}` template variable.
+ * Prefer `XYZ` with the `{-y}` variable for TMS servers.
+ */
 export type WebMapScheme = "XYZ" | "TMS";
 
-export interface IWebMapTileDataSourceOptions {
+/** URL templates accept the variables of `@spacexr/tiles`: `{z}`, `{x}`, `{y}`, `{-y}`, `{quadkey}`, `{s}` and application variables. */
+export interface IWebMapTileDataSourceOptions extends ITileUrlTemplateOptions {
     id?: string;
     urlTemplates: string | readonly string[];
     metrics: ITileMetrics;
@@ -25,7 +31,7 @@ export interface IWebMapTileDataSourceOptions {
     contentMetadata?: (address: ITileAddress, contentIndex: number) => IMetadataEntity | undefined;
 }
 
-export interface IWebMapImplicitSourceOptions extends IImplicitTilesetDecoratorOptions {
+export interface IWebMapImplicitSourceOptions extends IImplicitTilesetDecoratorOptions, ITileUrlTemplateOptions {
     id?: string;
     urlTemplates: string | readonly string[];
     metrics?: ITileMetrics;
@@ -55,15 +61,6 @@ export interface IWebMapImplicitSource {
     resolver: ImplicitTilesetDecorator;
 }
 
-function replaceWebTemplate(template: string, address: ITileAddress): string {
-    return template
-        .replaceAll("{z}", String(address.lod))
-        .replaceAll("{lod}", String(address.lod))
-        .replaceAll("{level}", String(address.lod))
-        .replaceAll("{x}", String(address.x))
-        .replaceAll("{y}", String(address.y));
-}
-
 function assertSafeCoordinate(value: number, name: string): void {
     if (!Number.isSafeInteger(value) || value < 0) throw new RangeError(`${name} must be a non-negative safe integer.`);
 }
@@ -81,6 +78,7 @@ export class WebMapTileDataSource implements ITileDataSource {
     private readonly geometricErrorOverride: ((address: ITileAddress) => number) | undefined;
     private readonly tileMetadata: ((address: ITileAddress) => IMetadataEntity | undefined) | undefined;
     private readonly contentMetadata: ((address: ITileAddress, contentIndex: number) => IMetadataEntity | undefined) | undefined;
+    private readonly templateOptions: ITileUrlTemplateOptions;
 
     public constructor(options: IWebMapTileDataSourceOptions) {
         this.id = options.id ?? "web-map";
@@ -97,6 +95,11 @@ export class WebMapTileDataSource implements ITileDataSource {
         this.geometricErrorOverride = options.geometricError;
         this.tileMetadata = options.tileMetadata;
         this.contentMetadata = options.contentMetadata;
+        this.templateOptions = {
+            ...(options.subdomains ? { subdomains: [...options.subdomains] } : {}),
+            ...(options.variables ? { variables: { ...options.variables } } : {}),
+        };
+        for (const template of this.urlTemplates) validateTileUrlTemplate(template, this.templateOptions);
 
         assertSafeCoordinate(this.rootAddress.lod, "Root LOD");
         assertSafeCoordinate(this.rootAddress.x, "Root X");
@@ -123,6 +126,13 @@ export class WebMapTileDataSource implements ITileDataSource {
         return { lod, x, y };
     }
 
+    /** Expands a template for an address in the data source convention. `{y}` follows the scheme; other variables use XYZ rows. */
+    private urlOf(template: string, address: ITileAddress): string {
+        if (this.scheme === "XYZ") return expandTileUrlTemplate(template, address, this.templateOptions);
+        const xyzAddress = { lod: address.lod, x: address.x, y: toTmsY(address.y, address.lod) };
+        return expandTileUrlTemplate(template.replaceAll("{y}", "{-y}"), xyzAddress, this.templateOptions);
+    }
+
     public resolve(coordinates: IImplicitCoordinates, computedContents: readonly IContent[] = []): ITileDataSourceTile {
         const address = this.addressOf(coordinates);
         const xyzY = this.scheme === "XYZ" ? address.y : 2 ** address.lod - 1 - address.y;
@@ -132,7 +142,7 @@ export class WebMapTileDataSource implements ITileDataSource {
             const metadata = this.contentMetadata?.(address, index);
             return {
                 ...(computedContents[index] ?? computedContents[0] ?? {}),
-                uri: replaceWebTemplate(template, address),
+                uri: this.urlOf(template, address),
                 ...(metadata ? { metadata } : {}),
             };
         });
@@ -181,6 +191,8 @@ export function createWebMapImplicitSource(options: IWebMapImplicitSourceOptions
         ...(options.id !== undefined ? { id: options.id } : {}),
         urlTemplates: options.urlTemplates,
         metrics,
+        ...(options.subdomains !== undefined ? { subdomains: options.subdomains } : {}),
+        ...(options.variables !== undefined ? { variables: options.variables } : {}),
         rootAddress: options.rootAddress ?? {
             lod: options.rootZoom ?? metrics.minLOD,
             x: options.rootX ?? 0,

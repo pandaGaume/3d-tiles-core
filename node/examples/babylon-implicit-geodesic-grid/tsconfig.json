@@ -16,6 +16,7 @@
         "baseUrl": ".",
         "paths": {
             "@spacexr/3d-tiles-core": ["../../packages/core/src/index.ts"],
+            "@spacexr/tiles": ["../../packages/tiles/src/index.ts"],
             "@spacexr/3d-tiles-runtime": ["../../packages/runtime/src/index.ts"]
         },
         "types": ["vite/client", "vitest/globals"]

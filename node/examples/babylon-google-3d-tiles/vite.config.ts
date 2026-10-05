@@ -33,6 +33,7 @@ export default defineConfig(({ command, mode }) => {
         resolve: {
             alias: {
                 "@spacexr/3d-tiles-core": fileURLToPath(new URL("../../packages/core/src/index.ts", import.meta.url)),
+                "@spacexr/tiles": fileURLToPath(new URL("../../packages/tiles/src/index.ts", import.meta.url)),
                 "@spacexr/3d-tiles-runtime": fileURLToPath(new URL("../../packages/runtime/src/index.ts", import.meta.url)),
             },
         },

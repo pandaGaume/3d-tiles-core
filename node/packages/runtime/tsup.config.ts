@@ -16,5 +16,5 @@ export default defineConfig({
     clean: true,
     splitting: true,
     treeshake: true,
-    external: ["@spacexr/3d-tiles-core", "@spacexr/geodesy"],
+    external: ["@spacexr/3d-tiles-core", "@spacexr/geodesy", "@spacexr/tiles"],
 });

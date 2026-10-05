@@ -1,6 +1,7 @@
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial.js";
+import { VertexBuffer } from "@babylonjs/core/Buffers/buffer.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData.js";
 import type { Scene } from "@babylonjs/core/scene.js";
@@ -16,10 +17,25 @@ import {
     type MetadataHandle,
 } from "@spacexr/3d-tiles-runtime";
 import { GeodeticSystem } from "@spacexr/geodesy";
-
 import {
+    ancestorTileAddress,
+    heightRangeInArea,
+    loadDemTile,
+    sampleHeightBilinear,
+    type DemInfos,
+    type IDemTileSource,
+    type IHeightRange,
+    type IDemDecoder,
+    type QuadrantHeightRanges,
+} from "@spacexr/tiles";
+
+import type { ChildHeightRanges } from "./child-height-ranges";
+import {
+    composeElevatedPositions,
     createGridTopology,
+    type IElevatedGridGeometry,
     type IGridTopology,
+    projectElevatedGrid,
     projectGridTopologyToEllipsoid,
 } from "./geodesic-grid-geometry";
 import type {
@@ -28,6 +44,8 @@ import type {
 } from "./babylon-runtime-monitor";
 
 const GRID_SUBDIVISIONS = 16;
+/** DEM tiles kept in memory, so that grids deeper than the DEM reuse their common ancestor. */
+const DEM_CACHE_ENTRIES = 256;
 const LOD_COLORS = [
     "#2f80ed",
     "#00c2ff",
@@ -48,10 +66,53 @@ export interface IBabylonGeodesicGridHandle {
     metadataHandle: MetadataHandle;
     estimatedCpuBytes: number;
     estimatedGpuBytes: number;
+    /** Present when the grid carries DEM heights. */
+    elevated: IElevatedGridGeometry | undefined;
+}
+
+/** Elevation applied to grid vertices, one DEM tile per grid tile. */
+export interface IGridElevationOptions {
+    dem: IDemTileSource;
+    /** Decodes DEM tiles, preferably in workers. */
+    demDecoder: IDemDecoder;
+    /** Initial vertical scale applied to every height. Defaults to 1. */
+    verticalScale?: number;
+    /** Receives the quadrant ranges of each loaded tile, prepared for its four children. */
+    childHeightRanges?: ChildHeightRanges;
 }
 
 export interface IBabylonGeodesicGridPipelineOptions {
     wireframe?: boolean;
+    /** Displaces vertices with DEM heights. Without it, grids lie on the region minimum height. */
+    elevation?: IGridElevationOptions;
+}
+
+/** Height in metres at normalized tile coordinates, `u` west to east and `v` north to south. */
+type HeightSampler = (u: number, v: number) => number;
+
+/** Unscaled heights of one grid tile and the ranges measured with them. */
+interface ITileHeights {
+    sampler: HeightSampler;
+    /** Range of the tile. */
+    range: IHeightRange;
+    /** Ranges of the four children, in north-west, north-east, south-west, south-east order. */
+    quadrants: QuadrantHeightRanges;
+}
+
+/** Region whose height interval is a measured range multiplied by a vertical scale. */
+function regionWithHeights(
+    region: readonly number[],
+    range: IHeightRange,
+    scale: number,
+): [number, number, number, number, number, number] {
+    return [
+        region[0]!,
+        region[1]!,
+        region[2]!,
+        region[3]!,
+        range.minimum * scale,
+        range.maximum * scale,
+    ];
 }
 
 function tileRegion(
@@ -144,6 +205,12 @@ export class BabylonGeodesicGridPipeline
     private readonly labelLayer: HTMLElement;
     private readonly scene: Scene;
     private readonly wireframe: boolean;
+    private readonly elevation: IGridElevationOptions | undefined;
+    private readonly demCache = new Map<
+        string,
+        Promise<DemInfos | undefined>
+    >();
+    private verticalScale: number;
     private createdHandleCount = 0;
     private releasedHandleCount = 0;
 
@@ -156,6 +223,8 @@ export class BabylonGeodesicGridPipeline
         this.scene = scene;
         this.labelLayer = labelLayer;
         this.wireframe = options.wireframe ?? true;
+        this.elevation = options.elevation;
+        this.verticalScale = options.elevation?.verticalScale ?? 1;
         this.topology = createGridTopology(subdivisions);
     }
 
@@ -172,7 +241,16 @@ export class BabylonGeodesicGridPipeline
                 continue;
             }
             try {
-                const handle = this.createHandle(context, content.id);
+                const heights = await this.loadHeights(tileIdentity(context));
+                if (context.signal.aborted) {
+                    await context.readiness.cancelled(content.id);
+                    continue;
+                }
+                const handle = this.createHandle(
+                    context,
+                    content.id,
+                    heights?.sampler,
+                );
                 const accepted = await context.readiness.ready(content.id, {
                     kind: "renderable",
                     handle,
@@ -182,10 +260,26 @@ export class BabylonGeodesicGridPipeline
                         gpuBytes: handle.estimatedGpuBytes,
                         networkBytes: 0,
                     },
+                    // The tile starts at 0/0; its DEM gives the measured height range.
+                    ...(heights &&
+                    !Number.isNaN(heights.range.minimum) &&
+                    !Number.isNaN(heights.range.maximum)
+                        ? {
+                              tileBoundingVolume: {
+                                  region: regionWithHeights(
+                                      tileRegion(context),
+                                      heights.range,
+                                      this.verticalScale,
+                                  ),
+                              },
+                          }
+                        : {}),
                 });
                 if (!accepted) this.disposeHandle(handle);
             } catch (error) {
-                await context.readiness.failed(content.id, error);
+                if (context.signal.aborted)
+                    await context.readiness.cancelled(content.id);
+                else await context.readiness.failed(content.id, error);
             }
         }
     }
@@ -306,6 +400,140 @@ export class BabylonGeodesicGridPipeline
         };
     }
 
+    /** Current vertical scale applied to DEM heights. */
+    public get currentVerticalScale(): number {
+        return this.verticalScale;
+    }
+
+    /**
+     * Changes the vertical scale of every elevated grid in place. Tiles keep
+     * the bounding volume reported with the scale they were loaded with; new
+     * tiles report volumes for the new scale.
+     */
+    public setVerticalScale(scale: number): void {
+        if (!Number.isFinite(scale) || scale < 0)
+            throw new RangeError("The vertical scale must be non-negative.");
+        this.verticalScale = scale;
+        for (const handle of this.handles) {
+            if (!handle.elevated) continue;
+            const positions = composeElevatedPositions(handle.elevated, scale);
+            const normals: number[] = [];
+            VertexData.ComputeNormals(
+                positions,
+                handle.elevated.indices,
+                normals,
+            );
+            handle.mesh.updateVerticesData(
+                VertexBuffer.PositionKind,
+                positions,
+            );
+            handle.mesh.updateVerticesData(VertexBuffer.NormalKind, normals);
+            handle.mesh.refreshBoundingInfo();
+        }
+    }
+
+    /**
+     * Loads the heights of a grid tile with its range and the ranges of its
+     * four children, which are recorded for the next zoom level.
+     *
+     * Beyond the DEM maximum level, the ancestor DEM tile is sampled on the
+     * matching sub-area (overzoom), and ranges cover every DEM sample that can
+     * influence a bilinear sample in the area. Returns `undefined` when
+     * elevation is disabled or the DEM tile does not exist.
+     */
+    private async loadHeights(
+        identity: ITileAddress,
+    ): Promise<ITileHeights | undefined> {
+        if (!this.elevation) return undefined;
+        const { dem } = this.elevation;
+        const demLod = Math.min(identity.lod, dem.source.metrics.maxLOD);
+        const levels = identity.lod - demLod;
+        const ancestor = ancestorTileAddress(identity, levels);
+        const grid = await this.cachedDem(ancestor);
+        if (!grid) return undefined;
+
+        const scale = 2 ** levels;
+        const west = (identity.x - ancestor.x * scale) / scale;
+        const north = (identity.y - ancestor.y * scale) / scale;
+        const size = 1 / scale;
+        const half = size / 2;
+        const range =
+            levels === 0
+                ? { minimum: grid.minimum, maximum: grid.maximum }
+                : heightRangeInArea(
+                      grid,
+                      west,
+                      north,
+                      west + size,
+                      north + size,
+                  );
+        const quadrants: QuadrantHeightRanges =
+            levels === 0
+                ? grid.quadrants
+                : [
+                      heightRangeInArea(
+                          grid,
+                          west,
+                          north,
+                          west + half,
+                          north + half,
+                      ),
+                      heightRangeInArea(
+                          grid,
+                          west + half,
+                          north,
+                          west + size,
+                          north + half,
+                      ),
+                      heightRangeInArea(
+                          grid,
+                          west,
+                          north + half,
+                          west + half,
+                          north + size,
+                      ),
+                      heightRangeInArea(
+                          grid,
+                          west + half,
+                          north + half,
+                          west + size,
+                          north + size,
+                      ),
+                  ];
+        this.elevation.childHeightRanges?.recordChildren(identity, quadrants);
+        return {
+            sampler: (u, v) =>
+                sampleHeightBilinear(grid, west + u * size, north + v * size),
+            range,
+            quadrants,
+        };
+    }
+
+    /**
+     * Loads a DEM tile once and shares it between grids. The request is not
+     * bound to one activation signal, because other grids may await it.
+     */
+    private cachedDem(address: ITileAddress): Promise<DemInfos | undefined> {
+        const { dem, demDecoder } = this.elevation!;
+        const key = `${address.lod}/${address.x}/${address.y}`;
+        const cached = this.demCache.get(key);
+        if (cached) {
+            this.demCache.delete(key);
+            this.demCache.set(key, cached);
+            return cached;
+        }
+        const loading = loadDemTile(dem, address, demDecoder).then(
+            (tile) => tile?.content,
+        );
+        loading.catch(() => this.demCache.delete(key));
+        this.demCache.set(key, loading);
+        if (this.demCache.size > DEM_CACHE_ENTRIES) {
+            const oldest = this.demCache.keys().next().value;
+            if (oldest !== undefined) this.demCache.delete(oldest);
+        }
+        return loading;
+    }
+
     private createHandle(
         context: ITileActivationContext<
             IEcefSpatialState,
@@ -313,10 +541,29 @@ export class BabylonGeodesicGridPipeline
             never
         >,
         contentId: string,
+        heightAt?: HeightSampler,
     ): IBabylonGeodesicGridHandle {
         const region = tileRegion(context);
         const identity = tileIdentity(context);
-        const geometry = projectGridTopologyToEllipsoid(this.topology, region);
+        // Rows follow Web Mercator so that vertices line up with DEM pixels.
+        const elevated = heightAt
+            ? projectElevatedGrid(this.topology, region, heightAt)
+            : undefined;
+        const geometry = elevated
+            ? {
+                  positions: composeElevatedPositions(
+                      elevated,
+                      this.verticalScale,
+                  ),
+                  uvs: elevated.uvs,
+                  indices: elevated.indices,
+              }
+            : projectGridTopologyToEllipsoid(
+                  this.topology,
+                  region,
+                  GeodeticSystem.WGS84,
+                  { latitudeInterpolation: "mercator" },
+              );
         const normals: number[] = [];
         VertexData.ComputeNormals(
             geometry.positions,
@@ -330,7 +577,7 @@ export class BabylonGeodesicGridPipeline
         vertexData.uvs = geometry.uvs;
         vertexData.indices = geometry.indices;
         vertexData.normals = normals;
-        vertexData.applyToMesh(mesh);
+        vertexData.applyToMesh(mesh, elevated !== undefined);
         mesh.material = this.materialForLod(identity.lod);
         mesh.isVisible = false;
         mesh.alwaysSelectAsActiveMesh = true;
@@ -360,6 +607,7 @@ export class BabylonGeodesicGridPipeline
             metadataHandle: NO_METADATA,
             estimatedCpuBytes,
             estimatedGpuBytes,
+            elevated,
         };
         this.handles.add(handle);
         this.createdHandleCount++;
@@ -375,10 +623,17 @@ export class BabylonGeodesicGridPipeline
             `geodesic-grid-material-lod-${lod}`,
             this.scene,
         );
-        material.diffuseColor = color.scale(0.55);
-        material.emissiveColor = color;
         material.specularColor = Color3.Black();
-        material.disableLighting = true;
+        if (this.wireframe) {
+            material.diffuseColor = color.scale(0.55);
+            material.emissiveColor = color;
+            material.disableLighting = true;
+        } else {
+            // Shaded relief: the scene lights reveal slopes; a faint emissive keeps the LOD tint in shadows.
+            material.diffuseColor = color.scale(0.9);
+            material.emissiveColor = color.scale(0.08);
+            material.twoSidedLighting = true;
+        }
         material.wireframe = this.wireframe;
         material.backFaceCulling = false;
         material.useLogarithmicDepth = true;

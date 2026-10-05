@@ -27,6 +27,7 @@ interface ICamera {
 
 interface ISpatial {
     geometricError: number;
+    heights?: number[];
 }
 
 interface IHandle {
@@ -266,6 +267,97 @@ describe("TileRuntime implicit traversal", () => {
         );
         expect(levelOne.every((request) => request.tile.boundingVolume.region?.[4] === -100)).toBe(true);
         expect(levelOne.every((request) => request.tile.boundingVolume.region?.[5] === 4000)).toBe(true);
+        await runtime.dispose();
+    });
+
+    it("re-resolves child bounds from parent content, except for children with measured content bounds", async () => {
+        const source = createWebMapImplicitSource({
+            urlTemplates: "https://dem.example.test/{z}/{x}/{y}.png",
+            maximumZoom: 1,
+            subtreeLevels: 2,
+        });
+        // Child height ranges prepared by the parent content, keyed by implicit coordinates.
+        const prepared = new Map<string, [number, number]>();
+        let releaseRoot!: () => void;
+        const rootGate = new Promise<void>((resolve) => (releaseRoot = resolve));
+        const heights = new Map<string, number[]>();
+        const origins: string[] = [];
+        const adapter: IRuntimeAdapter<ICamera, ISpatial, IHandle, string> = {
+            tilesets: { load: async () => ({ tileset: source.tileset }) },
+            subtrees: new DenseImplicitSubtreeLoader(),
+            implicitTiles: {
+                resolve: (context) => {
+                    const override = source.resolver.resolve(context);
+                    const region = override?.boundingVolume?.region;
+                    const range = prepared.get(`${context.coordinates.level}/${context.coordinates.x}/${context.coordinates.y}`) ?? [0, 0];
+                    return region
+                        ? { ...override, boundingVolume: { region: [region[0], region[1], region[2], region[3], ...range] } }
+                        : override;
+                },
+            },
+            spatial: {
+                derive: (context) => ({
+                    geometricError: context.tile.geometricError,
+                    heights: context.tile.boundingVolume.region!.slice(4),
+                }),
+                isVisible: () => true,
+                screenSpaceError: (context) => context.camera.multiplier * context.spatial.geometricError,
+            },
+            content: {
+                load: async (context) => {
+                    const { level, x, y } = context.implicitCoordinates!;
+                    if (level === 0) {
+                        await rootGate;
+                        for (const [cx, cy] of [
+                            [0, 0],
+                            [1, 0],
+                            [0, 1],
+                            [1, 1],
+                        ] as const)
+                            prepared.set(`1/${cx}/${cy}`, [100 * (cx + 2 * cy), 100 * (cx + 2 * cy) + 50]);
+                    }
+                    const measured =
+                        level === 1 && x === 0 && y === 0
+                            ? { tileBoundingVolume: { region: [0, 0, 0, 0, 7, 8] as [number, number, number, number, number, number] } }
+                            : {};
+                    return { kind: "renderable", handle: { uri: context.uri }, ...measured };
+                },
+                attach: () => undefined,
+                detach: () => undefined,
+            },
+        };
+        const runtime = new TileRuntime({ id: "dem", uri: "memory://dem/tileset.json", adapter, maxScreenSpaceError: 1 });
+        runtime.events.subscribe((event) => {
+            if (event.type === "tile-bounds-refined")
+                origins.push(`${event.tile.implicit?.coordinates.x}/${event.tile.implicit?.coordinates.y}:${event.origin}`);
+        });
+
+        // Let the subtree load and the children materialize and load while the root content is still pending.
+        for (let frame = 0; frame < 5; frame++) {
+            await runtime.update({ multiplier: 1 });
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        const levelOne = runtime.root!.children.filter((child) => child.implicit?.coordinates.level === 1);
+        expect(levelOne).toHaveLength(4);
+        for (const child of levelOne)
+            heights.set(
+                `${child.implicit!.coordinates.x}/${child.implicit!.coordinates.y}`,
+                (child.spatial as ISpatial & { heights: number[] }).heights,
+            );
+        expect(heights.get("1/1")).toEqual([0, 0]);
+
+        releaseRoot();
+        await runtime.whenIdle();
+
+        const finalHeights = Object.fromEntries(
+            levelOne.map((child) => [
+                `${child.implicit!.coordinates.x}/${child.implicit!.coordinates.y}`,
+                (child.spatial as ISpatial & { heights: number[] }).heights,
+            ]),
+        );
+        expect(finalHeights).toEqual({ "0/0": [7, 8], "1/0": [100, 150], "0/1": [200, 250], "1/1": [300, 350] });
+        expect(origins).toEqual(expect.arrayContaining(["0/0:content", "1/0:parent-content", "0/1:parent-content", "1/1:parent-content"]));
+        expect(origins).not.toContain("0/0:parent-content");
         await runtime.dispose();
     });
 

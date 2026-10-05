@@ -1,4 +1,4 @@
-import type { IContent, IMetadataSchema, ITile } from "@spacexr/3d-tiles-core";
+import type { IBoundingVolume, IContent, IMetadataSchema, ITile } from "@spacexr/3d-tiles-core";
 
 import { LoadedSubtreeAvailability } from "../implicit/availability";
 import {
@@ -811,6 +811,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             else delete content.cost;
             if (result.featureMetadata) content.featureMetadata = result.featureMetadata;
             else delete content.featureMetadata;
+            if (result.tileBoundingVolume) this.refineTileBoundingVolume(node, result.tileBoundingVolume);
+            this.refreshImplicitChildBounds(node);
             return;
         }
         if (result.kind === "external-tileset") {
@@ -834,6 +836,39 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             return;
         }
         content.kind = TileContentKind.Empty;
+    }
+
+    /**
+     * Re-derives the spatial state of a tile from a bounding volume measured on its content.
+     * The serialized tile stays unchanged; only the runtime state uses the measured volume.
+     */
+    private refineTileBoundingVolume(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>, boundingVolume: IBoundingVolume): void {
+        node.spatial = this.adapter.spatial.derive({
+            tile: { ...node.source, boundingVolume },
+            ...(node.parent ? { parent: node.parent.spatial } : {}),
+        });
+        node.contentBoundsRefined = true;
+        this.events.emit({ type: "tile-bounds-refined", tile: node, origin: "content" });
+    }
+
+    /**
+     * Resolves the bounding volumes of materialized implicit children again once their parent content is ready.
+     *
+     * An implicit resolver may derive child volumes from the parent content, for example the quadrant height ranges
+     * of a DEM. Children materialized before that content arrived would otherwise keep their initial volume, be culled
+     * and never load. Children whose own content already reported a measured volume are left unchanged.
+     */
+    private refreshImplicitChildBounds(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): void {
+        if (!this.adapter.implicitTiles) return;
+        for (const child of node.children) {
+            if (!child.implicit || child.contentBoundsRefined) continue;
+            const resolved = this.createImplicitTileSource(child.implicit, child.document);
+            child.spatial = this.adapter.spatial.derive({
+                tile: { ...child.source, boundingVolume: resolved.boundingVolume },
+                parent: node.spatial,
+            });
+            this.events.emit({ type: "tile-bounds-refined", tile: child, origin: "parent-content" });
+        }
     }
 
     private refreshNodeReadiness(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): void {

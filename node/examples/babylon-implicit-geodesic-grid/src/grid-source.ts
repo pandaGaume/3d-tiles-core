@@ -16,9 +16,12 @@ import {
     WebMercatorTileMetrics,
 } from "@spacexr/3d-tiles-runtime";
 
+import type { ChildHeightRanges } from "./child-height-ranges";
+
 export const TILE_METRICS = new WebMercatorTileMetrics({
     minLOD: 3,
-    maxLOD: 12,
+    // Mapzen Terrarium stops at level 15; deeper grids sample their level 15 ancestor.
+    maxLOD: 18,
     tileSize: 256,
 });
 
@@ -58,12 +61,20 @@ export interface IGeodesicGridSource {
     metrics: WebMercatorTileMetrics;
 }
 
+/** Height ranges prepared by parent DEMs, applied when child tiles are created. */
+export interface IPreparedHeights {
+    ranges: ChildHeightRanges;
+    /** Current vertical scale applied to heights. */
+    verticalScale: () => number;
+}
+
 class GeodesicGridImplicitResolver implements IImplicitTileResolver {
     public constructor(
         private readonly decoratorsByRoot: ReadonlyMap<
             ITile,
             ImplicitTilesetDecorator
         >,
+        private readonly prepared: IPreparedHeights | undefined,
     ) {}
 
     public resolve(
@@ -72,12 +83,38 @@ class GeodesicGridImplicitResolver implements IImplicitTileResolver {
         const decorator = this.decoratorsByRoot.get(context.rootTile);
         if (!decorator)
             throw new Error("No data source owns this implicit root tile.");
-        return decorator.resolve(context);
+        const override = decorator.resolve(context);
+        const region = override?.boundingVolume?.region;
+        const properties = override?.metadata?.properties;
+        if (!this.prepared || !region || !properties) return override;
+
+        const range = this.prepared.ranges.rangeFor({
+            lod: Number(properties.lod),
+            x: Number(properties.x),
+            y: Number(properties.y),
+        });
+        if (!range) return override;
+        const scale = this.prepared.verticalScale();
+        return {
+            ...override,
+            boundingVolume: {
+                region: [
+                    region[0],
+                    region[1],
+                    region[2],
+                    region[3],
+                    range[0] * scale,
+                    range[1] * scale,
+                ],
+            },
+        };
     }
 }
 
 /** Creates a global Web Map forest whose LOD 3 roots are decorated as implicit 3D Tiles. */
-export function createGeodesicGridSource(): IGeodesicGridSource {
+export function createGeodesicGridSource(
+    prepared?: IPreparedHeights,
+): IGeodesicGridSource {
     const rootsPerAxis = 2 ** TILE_METRICS.minLOD;
     const children: ITile[] = [];
     const dataSources: WebMapTileDataSource[] = [];
@@ -91,8 +128,9 @@ export function createGeodesicGridSource(): IGeodesicGridSource {
                 metrics: TILE_METRICS,
                 rootAddress: { lod: TILE_METRICS.minLOD, x, y },
                 subtreeLevels: 4,
+                // Tiles start flat; the DEM loaded with each tile reports its measured height range.
                 minimumHeight: 0,
-                maximumHeight: 500,
+                maximumHeight: 0,
                 refine: "REPLACE",
                 tileMetadata,
                 contentMetadata: tileMetadata,
@@ -130,7 +168,7 @@ export function createGeodesicGridSource(): IGeodesicGridSource {
                         Math.PI,
                         maximumLatitudeRadians,
                         0,
-                        500,
+                        0,
                     ],
                 },
                 geometricError: rootGeometricError,
@@ -138,7 +176,7 @@ export function createGeodesicGridSource(): IGeodesicGridSource {
                 children: rootChildren,
             },
         },
-        resolver: new GeodesicGridImplicitResolver(decoratorsByRoot),
+        resolver: new GeodesicGridImplicitResolver(decoratorsByRoot, prepared),
         dataSources,
         metrics: TILE_METRICS,
     };

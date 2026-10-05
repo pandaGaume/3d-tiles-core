@@ -76,7 +76,10 @@ export class Tile3D<TSpatial, TRenderHandle = unknown, TGlyphHandle = unknown> {
     public children: Array<Tile3D<TSpatial, TRenderHandle, TGlyphHandle>> = [];
     public readonly depth: number;
     public readonly refinementMode: TileRefinementMode;
-    public readonly spatial: TSpatial;
+    /** Derived spatial state. Replaced when loaded content reports a tighter tile bounding volume. */
+    public spatial: TSpatial;
+    /** True once the tile own content reported its measured bounding volume; parent refreshes no longer apply. */
+    public contentBoundsRefined = false;
     public readonly contents: Array<Tile3DContent<TRenderHandle>>;
     public visible = false;
     public screenSpaceError = 0;

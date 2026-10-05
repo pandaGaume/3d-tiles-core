@@ -45,4 +45,29 @@ describe("tile data source metrics", () => {
                 }),
         ).toThrow(/metrics\.minLOD 3/);
     });
+
+    it("expands subdomain, quadkey, TMS and application variables", () => {
+        const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 5 });
+        const dataSource = new WebMapTileDataSource({
+            metrics,
+            urlTemplates: ["https://{s}.imagery.test/{quadkey}.jpeg", "https://dem.test/{z}/{x}/{-y}.png?key={apiKey}"],
+            subdomains: ["t0", "t1"],
+            variables: { apiKey: "secret" },
+        });
+        // Implicit (3, 3, 2) is XYZ tile 3/3/5, quadkey 213.
+        const uris = dataSource.resolve({ level: 3, x: 3, y: 2 }).contents.map((content) => content.uri);
+        expect(uris).toEqual(["https://t0.imagery.test/213.jpeg", "https://dem.test/3/3/2.png?key=secret"]);
+    });
+
+    it("keeps {y} in the declared TMS convention", () => {
+        const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 5 });
+        const dataSource = new WebMapTileDataSource({ metrics, scheme: "TMS", urlTemplates: "https://tms.test/{z}/{x}/{y}/{quadkey}" });
+        expect(dataSource.addressOf({ level: 3, x: 3, y: 2 })).toEqual({ lod: 3, x: 3, y: 2 });
+        expect(dataSource.resolve({ level: 3, x: 3, y: 2 }).contents[0]?.uri).toBe("https://tms.test/3/3/2/213");
+    });
+
+    it("rejects templates with unknown variables at construction", () => {
+        const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 5 });
+        expect(() => new WebMapTileDataSource({ metrics, urlTemplates: "https://t/{zoom}/{x}/{y}" })).toThrow(/unknown variable \{zoom\}/);
+    });
 });

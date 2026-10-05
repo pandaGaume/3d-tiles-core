@@ -16,6 +16,7 @@ The repository is organized by target language so the same contracts can later b
 ```text
 node/packages/core/  TypeScript interfaces, codecs and validation
 node/packages/runtime/ Renderer-neutral traversal, loading and presentation lifecycle
+node/packages/tiles/ Web tile addressing, HTTP tile sources and DEM codecs (XYZ, TMS, quadkey, Terrarium)
 node/examples/babylon-google-3d-tiles/ Babylon.js and Google Photorealistic 3D Tiles example
 node/examples/babylon-implicit-geodesic-grid/ Renderer-neutral pipeline proof with ellipsoid-projected Babylon grids
 conformance/         Shared positive and negative conformance fixtures, including SPACEXR_bounding_volume_utm
@@ -45,7 +46,7 @@ npm ci
 npm run check
 ```
 
-The Node workspace publishes `@spacexr/3d-tiles-core` and `@spacexr/3d-tiles-runtime` under the `pandaGaume` GitHub organization.
+The Node workspace publishes `@spacexr/3d-tiles-core`, `@spacexr/tiles` and `@spacexr/3d-tiles-runtime` under the `pandaGaume` GitHub organization. `@spacexr/tiles` is independent of 3D Tiles; the runtime depends on it to expose web map and DEM pyramids as implicit tilesets.
 
 ## Babylon.js example
 

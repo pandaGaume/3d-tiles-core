@@ -1,4 +1,5 @@
 import type { AbstractEngine } from "@babylonjs/core/Engines/abstractEngine.js";
+import { EngineInstrumentation } from "@babylonjs/core/Instrumentation/engineInstrumentation.js";
 import { SceneInstrumentation } from "@babylonjs/core/Instrumentation/sceneInstrumentation.js";
 import type { Scene } from "@babylonjs/core/scene.js";
 import type {
@@ -24,6 +25,7 @@ export interface IBabylonRuntimeMonitorElements {
     memory: HTMLElement;
     cleanup: HTMLElement;
     renderer: HTMLElement;
+    frame: HTMLElement;
 }
 
 export interface IBabylonRuntimeMonitorOptions {
@@ -36,6 +38,11 @@ export interface IBabylonBenchmarkSnapshot {
     startupMilliseconds: number;
     framesPerSecond: number;
     drawCalls: number;
+    /** Babylon frame and inter-frame times, averaged over the last second, in milliseconds. */
+    frameMilliseconds: number;
+    interFrameMilliseconds: number;
+    renderMilliseconds: number;
+    gpuFrameMilliseconds?: number;
     selectedTiles: number;
     readyContents: number;
     cachedContents: number;
@@ -92,6 +99,7 @@ export class BabylonRuntimeMonitor {
     private readonly enabled: boolean;
     private readonly publishIntervalMilliseconds: number;
     private readonly sceneInstrumentation?: SceneInstrumentation;
+    private readonly engineInstrumentation?: EngineInstrumentation;
     private latestSnapshot?: IRuntimeStatisticsSnapshot;
     private nextPublicationAt = 0;
     private startupMilliseconds = 0;
@@ -117,10 +125,19 @@ export class BabylonRuntimeMonitor {
             this.elements.memory.textContent = "";
             this.elements.cleanup.textContent = "";
             this.elements.renderer.textContent = "";
+            this.elements.frame.textContent = "";
             return;
         }
 
         this.sceneInstrumentation = new SceneInstrumentation(scene);
+        // Standard Babylon timings: the inter-frame time is the JavaScript work outside rendering.
+        this.sceneInstrumentation.captureFrameTime = true;
+        this.sceneInstrumentation.captureInterFrameTime = true;
+        this.sceneInstrumentation.captureRenderTime = true;
+        this.sceneInstrumentation.captureActiveMeshesEvaluationTime = true;
+        this.engineInstrumentation = new EngineInstrumentation(this.engine);
+        // Requires GPU timer queries; the counter stays at 0 when the browser does not expose them.
+        this.engineInstrumentation.captureGPUFrameTime = true;
         this.latestSnapshot = this.runtime.snapshot();
         this.unsubscribeRuntime = this.runtime.subscribe((snapshot) => {
             this.latestSnapshot = snapshot;
@@ -173,11 +190,35 @@ export class BabylonRuntimeMonitor {
             ` | ${resources.created} created / ${resources.released} released` +
             ` | startup ${this.startupMilliseconds.toFixed(0)} ms`;
 
+        const scene = this.sceneInstrumentation;
+        const frameMilliseconds = scene.frameTimeCounter.lastSecAverage;
+        const interFrameMilliseconds =
+            scene.interFrameTimeCounter.lastSecAverage;
+        const renderMilliseconds = scene.renderTimeCounter.lastSecAverage;
+        const activeMeshesMilliseconds =
+            scene.activeMeshesEvaluationTimeCounter.lastSecAverage;
+        const gpuNanoseconds =
+            this.engineInstrumentation?.gpuFrameTimeCounter.lastSecAverage ?? 0;
+        const gpuFrameMilliseconds =
+            gpuNanoseconds > 0 ? gpuNanoseconds / 1e6 : undefined;
+        this.elements.frame.textContent =
+            `Frame ${frameMilliseconds.toFixed(1)} ms` +
+            ` | between frames ${interFrameMilliseconds.toFixed(1)} ms` +
+            ` | render ${renderMilliseconds.toFixed(1)} ms` +
+            ` | mesh selection ${activeMeshesMilliseconds.toFixed(2)} ms` +
+            ` | GPU ${gpuFrameMilliseconds === undefined ? "unavailable" : `${gpuFrameMilliseconds.toFixed(1)} ms`}`;
+
         const benchmark: IBabylonBenchmarkSnapshot = {
             renderer: "babylonjs",
             startupMilliseconds: this.startupMilliseconds,
             framesPerSecond,
             drawCalls,
+            frameMilliseconds,
+            interFrameMilliseconds,
+            renderMilliseconds,
+            ...(gpuFrameMilliseconds === undefined
+                ? {}
+                : { gpuFrameMilliseconds }),
             selectedTiles: snapshot.nodes.selected,
             readyContents: snapshot.contents.ready,
             cachedContents: snapshot.contents.cached,
@@ -198,5 +239,6 @@ export class BabylonRuntimeMonitor {
         this.unsubscribeRuntime();
         this.unsubscribeRuntime = () => undefined;
         this.sceneInstrumentation?.dispose();
+        this.engineInstrumentation?.dispose();
     }
 }
