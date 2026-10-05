@@ -1,3 +1,6 @@
+[![CI (Node)](https://github.com/pandaGaume/3d-tiles-core/actions/workflows/ci-node.yml/badge.svg)](https://github.com/pandaGaume/3d-tiles-core/actions/workflows/ci-node.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
 <p align="center">
   <img src="assets/brand/3d-tiles-core-logo.png" alt="3D Tiles Core" width="900">
 </p>
@@ -15,7 +18,7 @@ node/packages/core/  TypeScript interfaces, codecs and validation
 node/packages/runtime/ Renderer-neutral traversal, loading and presentation lifecycle
 node/examples/babylon-google-3d-tiles/ Babylon.js and Google Photorealistic 3D Tiles example
 node/examples/babylon-implicit-geodesic-grid/ Renderer-neutral pipeline proof with ellipsoid-projected Babylon grids
-conformance/         Shared positive and negative conformance fixtures
+conformance/         Shared positive and negative conformance fixtures, including SPACEXR_bounding_volume_utm
 dotnet/              Reserved for the future .NET implementation
 cpp/                 Reserved for the future C++ and Unreal implementation
 docs/                Cross-language architecture and compatibility rules
