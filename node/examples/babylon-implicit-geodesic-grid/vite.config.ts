@@ -17,6 +17,10 @@ export default defineConfig({
         port: 5174,
         open: true,
     },
+    esbuild: { target: "es2022", supported: {
+      'destructuring': true
+    }},
+    optimizeDeps: { esbuildOptions: { target: "es2022" } },
     build: {
         target: "es2022",
         sourcemap: true,

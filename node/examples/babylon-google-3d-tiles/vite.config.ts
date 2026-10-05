@@ -44,6 +44,8 @@ export default defineConfig(({ command, mode }) => {
         preview: {
             proxy,
         },
+        esbuild: { target: "es2022" },
+        optimizeDeps: { esbuildOptions: { target: "es2022" } },
         build: {
             target: "es2022",
             sourcemap: true,
