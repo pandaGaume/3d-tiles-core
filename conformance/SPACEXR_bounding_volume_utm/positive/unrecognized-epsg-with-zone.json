@@ -1,0 +1,36 @@
+{
+  "asset": {
+    "version": "1.1"
+  },
+  "geometricError": 0,
+  "root": {
+    "boundingVolume": {
+      "extensions": {
+        "SPACEXR_bounding_volume_utm": {
+          "epsg": 26718,
+          "zone": 18,
+          "hemisphere": "N",
+          "minEasting": 438510.189,
+          "minNorthing": 5830109.72,
+          "maxEasting": 438900.189,
+          "maxNorthing": 5830499.72,
+          "vertical": {
+            "reference": "GEOID",
+            "direction": "UP",
+            "minimum": 59.085,
+            "maximum": 254.085,
+            "epsg": 6647
+          }
+        }
+      }
+    },
+    "geometricError": 0,
+    "refine": "REPLACE"
+  },
+  "extensionsUsed": [
+    "SPACEXR_bounding_volume_utm"
+  ],
+  "extensionsRequired": [
+    "SPACEXR_bounding_volume_utm"
+  ]
+}

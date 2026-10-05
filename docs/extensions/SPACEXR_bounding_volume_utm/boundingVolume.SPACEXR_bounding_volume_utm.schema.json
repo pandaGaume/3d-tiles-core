@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boundingVolume.SPACEXR_bounding_volume_utm.schema.json",
+  "title": "SPACEXR_bounding_volume_utm extension",
+  "description": "Tile extent in UTM metres with an explicit vertical extent. Cross-property rules, such as EPSG and zone agreement, are enforced by validators and listed in README.md.",
+  "type": "object",
+  "properties": {
+    "epsg": { "type": "integer", "minimum": 1, "description": "Projected coordinate reference system." },
+    "zone": { "type": "integer", "minimum": 1, "maximum": 60 },
+    "hemisphere": { "enum": ["N", "S"] },
+    "minEasting": { "type": "number" },
+    "minNorthing": { "type": "number" },
+    "maxEasting": { "type": "number" },
+    "maxNorthing": { "type": "number" },
+    "vertical": { "$ref": "#/$defs/verticalExtent" },
+    "extensions": { "type": "object" },
+    "extras": {}
+  },
+  "required": ["minEasting", "minNorthing", "maxEasting", "maxNorthing", "vertical"],
+  "anyOf": [{ "required": ["epsg"] }, { "required": ["zone", "hemisphere"] }],
+  "dependentRequired": { "zone": ["hemisphere"], "hemisphere": ["zone"] },
+  "$defs": {
+    "verticalExtent": {
+      "type": "object",
+      "properties": {
+        "reference": { "enum": ["ELLIPSOID", "GEOID", "GROUND", "LOCAL"] },
+        "direction": { "enum": ["UP", "DOWN"] },
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" },
+        "epsg": { "type": "integer", "minimum": 1, "description": "Vertical coordinate reference system." },
+        "groundElevation": { "type": "number", "description": "Elevation of the GROUND reference surface, positive upward." },
+        "extensions": { "type": "object" },
+        "extras": {}
+      },
+      "required": ["reference", "direction", "minimum", "maximum"]
+    }
+  }
+}

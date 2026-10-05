@@ -51,6 +51,11 @@
             "import": "./dist/codecs/index.js",
             "default": "./dist/codecs/index.js"
         },
+        "./extensions": {
+            "types": "./dist/extensions/index.d.ts",
+            "import": "./dist/extensions/index.js",
+            "default": "./dist/extensions/index.js"
+        },
         "./validation": {
             "types": "./dist/validation/index.d.ts",
             "import": "./dist/validation/index.js",

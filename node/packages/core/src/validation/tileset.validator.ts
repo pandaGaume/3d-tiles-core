@@ -1,14 +1,19 @@
-import type { IBoundingVolume, IMetadataEntity, ITile, ITileset } from "../model";
+import { SPACEXR_BOUNDING_VOLUME_UTM, type IBoundingVolume, type IMetadataEntity, type ITile, type ITileset } from "../model";
 import type { IDiagnostic, IValidationResult } from "./diagnostic";
+import { addError, isRecord, validateRootProperties, type RecordValue } from "./shared";
+import { collectUtmBoundingVolumeDiagnostics } from "./utm-bounding-volume.validator";
 
-type RecordValue = Record<string, unknown>;
+/** Bounding volume extensions that can describe a tile extent, with the validator of their extension object. */
+const BOUNDING_VOLUME_EXTENSIONS: ReadonlyMap<string, (value: unknown, path: string, diagnostics: IDiagnostic[]) => void> = new Map([
+    [SPACEXR_BOUNDING_VOLUME_UTM, collectUtmBoundingVolumeDiagnostics],
+]);
 
-function isRecord(value: unknown): value is RecordValue {
-    return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function addError(diagnostics: IDiagnostic[], code: string, path: string, message: string): void {
-    diagnostics.push({ code, severity: "error", path, message });
+/** Occurrence of a bounding volume extension, checked against the tileset extension declarations. */
+interface IBoundingVolumeExtensionUse {
+    name: string;
+    path: string;
+    /** True when no box, region or sphere accompanies the extension. */
+    standalone: boolean;
 }
 
 function validateNonNegativeNumber(value: unknown, path: string, diagnostics: IDiagnostic[]): void {
@@ -31,13 +36,7 @@ function validateNumberTuple(value: unknown, size: number, path: string, diagnos
     return true;
 }
 
-function validateRootProperties(value: RecordValue, path: string, diagnostics: IDiagnostic[]): void {
-    if (value.extensions !== undefined && !isRecord(value.extensions)) {
-        addError(diagnostics, "INVALID_EXTENSIONS", `${path}/extensions`, "Expected an object keyed by extension name.");
-    }
-}
-
-function validateBoundingVolume(value: unknown, path: string, diagnostics: IDiagnostic[]): value is IBoundingVolume {
+function validateBoundingVolume(value: unknown, path: string, diagnostics: IDiagnostic[], extensionUses: IBoundingVolumeExtensionUse[]): value is IBoundingVolume {
     if (!isRecord(value)) {
         addError(diagnostics, "INVALID_BOUNDING_VOLUME", path, "Expected a bounding volume object.");
         return false;
@@ -45,9 +44,17 @@ function validateBoundingVolume(value: unknown, path: string, diagnostics: IDiag
 
     validateRootProperties(value, path, diagnostics);
     const members = ["box", "region", "sphere"].filter((name) => value[name] !== undefined);
-    if (members.length !== 1) {
-        addError(diagnostics, "BOUNDING_VOLUME_CARDINALITY", path, "Exactly one of box, region or sphere is required.");
+    const extensions = value.extensions;
+    const extensionNames = isRecord(extensions) ? [...BOUNDING_VOLUME_EXTENSIONS.keys()].filter((name) => extensions[name] !== undefined) : [];
+    if (members.length > 1 || members.length + extensionNames.length === 0) {
+        addError(diagnostics, "BOUNDING_VOLUME_CARDINALITY", path, "Exactly one of box, region or sphere is required, unless a bounding volume extension replaces them.");
         return false;
+    }
+
+    for (const name of extensionNames) {
+        const extensionPath = `${path}/extensions/${name}`;
+        BOUNDING_VOLUME_EXTENSIONS.get(name)?.((extensions as RecordValue)[name], extensionPath, diagnostics);
+        extensionUses.push({ name, path: extensionPath, standalone: members.length === 0 });
     }
 
     if (value.box !== undefined) validateNumberTuple(value.box, 12, `${path}/box`, diagnostics);
@@ -81,7 +88,7 @@ function validateMetadataEntity(value: unknown, path: string, diagnostics: IDiag
     return true;
 }
 
-function validateContent(value: unknown, path: string, diagnostics: IDiagnostic[]): void {
+function validateContent(value: unknown, path: string, diagnostics: IDiagnostic[], extensionUses: IBoundingVolumeExtensionUse[]): void {
     if (!isRecord(value)) {
         addError(diagnostics, "INVALID_CONTENT", path, "Expected a content object.");
         return;
@@ -90,7 +97,7 @@ function validateContent(value: unknown, path: string, diagnostics: IDiagnostic[
     if (typeof value.uri !== "string" || value.uri.length === 0) {
         addError(diagnostics, "INVALID_CONTENT_URI", `${path}/uri`, "Expected a non-empty content URI.");
     }
-    if (value.boundingVolume !== undefined) validateBoundingVolume(value.boundingVolume, `${path}/boundingVolume`, diagnostics);
+    if (value.boundingVolume !== undefined) validateBoundingVolume(value.boundingVolume, `${path}/boundingVolume`, diagnostics, extensionUses);
     if (value.metadata !== undefined) validateMetadataEntity(value.metadata, `${path}/metadata`, diagnostics);
     if (value.group !== undefined && (!Number.isInteger(value.group) || (value.group as number) < 0)) {
         addError(diagnostics, "INVALID_CONTENT_GROUP", `${path}/group`, "Expected a non-negative integer group index.");
@@ -122,14 +129,14 @@ function validateImplicitTemplate(uri: unknown, scheme: unknown, path: string, d
     }
 }
 
-function validateTile(value: unknown, path: string, diagnostics: IDiagnostic[], root: boolean): value is ITile {
+function validateTile(value: unknown, path: string, diagnostics: IDiagnostic[], extensionUses: IBoundingVolumeExtensionUse[], root: boolean): value is ITile {
     if (!isRecord(value)) {
         addError(diagnostics, "INVALID_TILE", path, "Expected a tile object.");
         return false;
     }
     validateRootProperties(value, path, diagnostics);
-    validateBoundingVolume(value.boundingVolume, `${path}/boundingVolume`, diagnostics);
-    if (value.viewerRequestVolume !== undefined) validateBoundingVolume(value.viewerRequestVolume, `${path}/viewerRequestVolume`, diagnostics);
+    validateBoundingVolume(value.boundingVolume, `${path}/boundingVolume`, diagnostics, extensionUses);
+    if (value.viewerRequestVolume !== undefined) validateBoundingVolume(value.viewerRequestVolume, `${path}/viewerRequestVolume`, diagnostics, extensionUses);
     validateNonNegativeNumber(value.geometricError, `${path}/geometricError`, diagnostics);
 
     if (root && value.refine === undefined) {
@@ -142,12 +149,12 @@ function validateTile(value: unknown, path: string, diagnostics: IDiagnostic[], 
     if (value.content !== undefined && value.contents !== undefined) {
         addError(diagnostics, "CONTENT_CARDINALITY", path, "content and contents are mutually exclusive.");
     }
-    if (value.content !== undefined) validateContent(value.content, `${path}/content`, diagnostics);
+    if (value.content !== undefined) validateContent(value.content, `${path}/content`, diagnostics, extensionUses);
     if (value.contents !== undefined) {
         if (!Array.isArray(value.contents) || value.contents.length === 0) {
             addError(diagnostics, "INVALID_CONTENTS", `${path}/contents`, "Expected a non-empty content array.");
         } else {
-            value.contents.forEach((content, index) => validateContent(content, `${path}/contents/${index}`, diagnostics));
+            value.contents.forEach((content, index) => validateContent(content, `${path}/contents/${index}`, diagnostics, extensionUses));
         }
     }
     if (value.metadata !== undefined) validateMetadataEntity(value.metadata, `${path}/metadata`, diagnostics);
@@ -182,7 +189,7 @@ function validateTile(value: unknown, path: string, diagnostics: IDiagnostic[], 
         if (!Array.isArray(value.children) || value.children.length === 0) {
             addError(diagnostics, "INVALID_CHILDREN", `${path}/children`, "Expected a non-empty child tile array.");
         } else {
-            value.children.forEach((child, index) => validateTile(child, `${path}/children/${index}`, diagnostics, false));
+            value.children.forEach((child, index) => validateTile(child, `${path}/children/${index}`, diagnostics, extensionUses, false));
         }
     }
     return true;
@@ -195,6 +202,31 @@ function validateStringArray(value: unknown, path: string, diagnostics: IDiagnos
         return undefined;
     }
     return value as string[];
+}
+
+/** Reports each bounding volume extension once, at its first occurrence. */
+function validateBoundingVolumeExtensionDeclarations(
+    extensionUses: readonly IBoundingVolumeExtensionUse[],
+    used: ReadonlySet<string>,
+    required: ReadonlySet<string>,
+    diagnostics: IDiagnostic[]
+): void {
+    const reported = new Set<string>();
+    for (const use of extensionUses) {
+        if (reported.has(use.name)) continue;
+        if (!used.has(use.name)) {
+            addError(diagnostics, "EXTENSION_NOT_DECLARED", use.path, `Extension ${use.name} is missing from extensionsUsed.`);
+            reported.add(use.name);
+        } else if (use.standalone && !required.has(use.name)) {
+            addError(
+                diagnostics,
+                "BOUNDING_VOLUME_EXTENSION_NOT_REQUIRED",
+                use.path,
+                `Extension ${use.name} replaces the standard bounding volume and must be listed in extensionsRequired.`
+            );
+            reported.add(use.name);
+        }
+    }
 }
 
 export function validateTileset(value: unknown): IValidationResult<ITileset> {
@@ -218,7 +250,8 @@ export function validateTileset(value: unknown): IValidationResult<ITileset> {
     }
 
     validateNonNegativeNumber(value.geometricError, "/geometricError", diagnostics);
-    validateTile(value.root, "/root", diagnostics, true);
+    const extensionUses: IBoundingVolumeExtensionUse[] = [];
+    validateTile(value.root, "/root", diagnostics, extensionUses, true);
 
     if (value.schema !== undefined && value.schemaUri !== undefined) {
         addError(diagnostics, "SCHEMA_CARDINALITY", "", "schema and schemaUri are mutually exclusive.");
@@ -236,8 +269,10 @@ export function validateTileset(value: unknown): IValidationResult<ITileset> {
 
     const used = validateStringArray(value.extensionsUsed, "/extensionsUsed", diagnostics);
     const required = validateStringArray(value.extensionsRequired, "/extensionsRequired", diagnostics);
+    const usedSet = new Set(used ?? []);
+    const requiredSet = new Set(required ?? []);
+    validateBoundingVolumeExtensionDeclarations(extensionUses, usedSet, requiredSet, diagnostics);
     if (required) {
-        const usedSet = new Set(used ?? []);
         required.forEach((extension, index) => {
             if (!usedSet.has(extension)) {
                 addError(diagnostics, "REQUIRED_EXTENSION_NOT_USED", `/extensionsRequired/${index}`, `Required extension ${extension} is missing from extensionsUsed.`);
