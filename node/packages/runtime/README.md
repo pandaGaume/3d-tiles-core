@@ -1,3 +1,6 @@
+[![CI (Node)](https://github.com/pandaGaume/3d-tiles-core/actions/workflows/ci-node.yml/badge.svg)](https://github.com/pandaGaume/3d-tiles-core/actions/workflows/ci-node.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
 # @spacexr/3d-tiles-runtime
 
 Renderer-neutral traversal and content lifecycle for OGC 3D Tiles.
@@ -57,5 +60,29 @@ const spatial = new EcefSpatialMetric({
 ```
 
 The geodesy package owns ellipsoids, geodetic to ECEF conversion and local ENU or NED frames. This runtime owns 3D Tiles transforms, bounding volumes, horizon and frustum culling, visibility, and screen-space error.
+
+## UTM extents
+
+`EcefSpatialMetric` places tiles whose bounding volume carries the `SPACEXR_bounding_volume_utm` extension. The UTM extent takes precedence over any standard fallback volume. It is inverted with the `@spacexr/geodesy` transverse Mercator projection on the ellipsoid of its datum, transformed to the metric geodetic system, then converted to ECEF.
+
+Every approximation widens the bounds and is reported in `IEcefSpatialState.utmPlacement`:
+
+- the datum transformation and its accuracy, by which the bounds are widened (`horizontalMargin`);
+- the vertical origin, and whether orthometric heights used a geoid model or the `GEOID_UNDULATION_MARGIN` of 110 m (`verticalMargin`);
+- the ellipsoidal height interval, including `UNKNOWN_GROUND_HEIGHT_RANGE` when the vertical origin is unknown;
+- `unresolved-projection` or `unresolved-datum` when the extent cannot be placed. The standard volume is then used if present.
+
+The default resolver targets WGS 84 with the published null transformations: NAD83 (EPSG:1188, 4 m), NAD83(CSRS) (2 m) and ETRS89 (EPSG:1149, 1 m). An extent without a recognized datum is not placed. Supply a resolver and a geoid model for precise placement:
+
+```ts
+const spatial = new EcefSpatialMetric({
+    utm: {
+        datumResolver: (projection) => myTransformations.get(projection.epsg),
+        geoidUndulation: (latitude, longitude) => myGeoid.undulation(latitude, longitude),
+    },
+});
+```
+
+`boundsFromUtm` and `ellipsoidalHeightRange` expose the same computation to adapters, and implicit tiling subdivides UTM extents like regions.
 
 See the repository document `docs/runtime-architecture.md` for lifecycle and metadata rules.

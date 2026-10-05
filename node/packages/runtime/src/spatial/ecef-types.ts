@@ -1,5 +1,7 @@
 import type { GeodeticSystem } from "@spacexr/geodesy";
 
+import type { IUtmPlacement, IUtmPlacementOptions } from "./utm-types";
+
 /** Mutable three-dimensional vector. ECEF values are expressed in metres. */
 export interface IVector3 {
     /** X component. */
@@ -68,6 +70,8 @@ export interface IEcefSpatialState {
     boundingBox?: IAxisAlignedBox;
     /** World-space geometric error in metres. */
     geometricError: number;
+    /** Report of the conversions and approximations applied, for tiles located by `SPACEXR_bounding_volume_utm`. */
+    utmPlacement?: IUtmPlacement;
 }
 
 /** Configuration for the renderer-neutral ECEF spatial metric. */
@@ -80,4 +84,6 @@ export interface IEcefSpatialMetricOptions {
     defaultViewportHeight?: number;
     /** Vertical field-of-view fallback in radians. Defaults to 60 degrees. */
     defaultVerticalFovRadians?: number;
+    /** Datum transformation and geoid model used to place `SPACEXR_bounding_volume_utm` extents. */
+    utm?: IUtmPlacementOptions;
 }

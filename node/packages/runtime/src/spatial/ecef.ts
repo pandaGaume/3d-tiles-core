@@ -1,3 +1,4 @@
+import { getUtmBoundingVolume } from "@spacexr/3d-tiles-core";
 import { GeodeticSystem } from "@spacexr/geodesy";
 
 import type { IScreenSpaceErrorContext, ISpatialDerivationContext, ISpatialMetric } from "../ports/spatial";
@@ -10,6 +11,8 @@ import {
     sphereOutsidePlane,
 } from "./bounding-volumes";
 import type { IEcefCameraFrame, IEcefSpatialMetricOptions, IEcefSpatialState } from "./ecef-types";
+import { boundsFromUtm } from "./utm-bounds";
+import type { IUtmPlacementOptions } from "./utm-types";
 import { matrixOf, maximumScale, multiplyTransforms, vectorLength } from "./matrix";
 
 const DEFAULT_VIEWPORT_HEIGHT = 1080;
@@ -27,6 +30,7 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
     private readonly horizonCulling: boolean;
     private readonly defaultViewportHeight: number;
     private readonly defaultVerticalFovRadians: number;
+    private readonly utmOptions: IUtmPlacementOptions;
 
     /**
      * Creates an ECEF spatial metric.
@@ -38,6 +42,7 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
         this.horizonCulling = options.horizonCulling ?? true;
         this.defaultViewportHeight = options.defaultViewportHeight ?? DEFAULT_VIEWPORT_HEIGHT;
         this.defaultVerticalFovRadians = options.defaultVerticalFovRadians ?? DEFAULT_VERTICAL_FOV_RADIANS;
+        this.utmOptions = options.utm ?? {};
 
         if (!Number.isFinite(this.defaultViewportHeight) || this.defaultViewportHeight <= 0) {
             throw new RangeError("The default viewport height must be a positive finite number.");
@@ -61,7 +66,12 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
      *
      * Box and sphere volumes receive the accumulated tile transform. A region
      * is already expressed in the tileset geodetic reference system and is not
-     * transformed, as required by 3D Tiles.
+     * transformed, as required by 3D Tiles. A `SPACEXR_bounding_volume_utm`
+     * extent is likewise absolute: it takes precedence over any standard
+     * fallback volume and ignores the tile transform. Its datum
+     * transformation, geoid handling and margins are reported in
+     * `utmPlacement`. When it cannot be placed, the standard volume is used
+     * if present; otherwise the state has no bounds and the tile is never culled.
      *
      * @param context - Source tile and optional parent spatial state.
      * @returns Spatial state expressed in ECEF metres.
@@ -71,7 +81,9 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
         const worldTransform = context.parent ? multiplyTransforms(context.parent.worldTransform, localTransform) : localTransform;
         const scale = maximumScale(worldTransform);
         const volume = context.tile.boundingVolume;
-        const bounds = volume.box
+        const utm = getUtmBoundingVolume(volume);
+        const utmBounds = utm ? boundsFromUtm(utm, this.system, this.utmOptions) : undefined;
+        const standardBounds = volume.box
             ? boundsFromBox(volume.box, worldTransform)
             : volume.sphere
               ? boundsFromSphere(volume.sphere, worldTransform)
@@ -79,9 +91,15 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
                 ? boundsFromRegion(volume.region, this.system)
                 : {};
 
+        if (utmBounds) {
+            const { placement, ...placedBounds } = utmBounds;
+            // An extent that cannot be placed falls back to the standard volume, if any; the report states why.
+            const bounds = placement.status === "placed" ? placedBounds : standardBounds;
+            return { worldTransform, ...bounds, geometricError: context.tile.geometricError * scale, utmPlacement: placement };
+        }
         return {
             worldTransform,
-            ...bounds,
+            ...standardBounds,
             geometricError: context.tile.geometricError * scale,
         };
     }

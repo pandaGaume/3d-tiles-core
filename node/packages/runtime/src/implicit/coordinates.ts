@@ -1,4 +1,12 @@
-import type { IBoundingVolume, IContent, IImplicitTiling, ITile } from "@spacexr/3d-tiles-core";
+import {
+    createUtmBoundingVolume,
+    getUtmBoundingVolume,
+    type IBoundingVolume,
+    type IContent,
+    type IImplicitTiling,
+    type ITile,
+    type IUtmBoundingVolume,
+} from "@spacexr/3d-tiles-core";
 
 import type { IImplicitCoordinates } from "./types";
 
@@ -79,12 +87,37 @@ export function implicitLocalCoordinates(global: IImplicitCoordinates, subtreeRo
     return result;
 }
 
+function subdivideUtmExtent(
+    root: IUtmBoundingVolume,
+    scheme: IImplicitTiling["subdivisionScheme"],
+    coordinates: IImplicitCoordinates,
+    scale: number,
+): IUtmBoundingVolume {
+    const eastingSize = (root.maxEasting - root.minEasting) / scale;
+    const northingSize = (root.maxNorthing - root.minNorthing) / scale;
+    const minEasting = root.minEasting + eastingSize * coordinates.x;
+    const minNorthing = root.minNorthing + northingSize * coordinates.y;
+    let vertical = root.vertical;
+    if (scheme === "OCTREE") {
+        // The z coordinate grows upward, so depths measured downward are split from their maximum.
+        const verticalSize = (root.vertical.maximum - root.vertical.minimum) / scale;
+        const offset = verticalSize * (coordinates.z ?? 0);
+        vertical =
+            root.vertical.direction === "DOWN"
+                ? { ...root.vertical, minimum: root.vertical.maximum - offset - verticalSize, maximum: root.vertical.maximum - offset }
+                : { ...root.vertical, minimum: root.vertical.minimum + offset, maximum: root.vertical.minimum + offset + verticalSize };
+    }
+    return { ...root, minEasting, minNorthing, maxEasting: minEasting + eastingSize, maxNorthing: minNorthing + northingSize, vertical };
+}
+
 export function subdivideImplicitBoundingVolume(
     root: IBoundingVolume,
     scheme: IImplicitTiling["subdivisionScheme"],
     coordinates: IImplicitCoordinates,
 ): IBoundingVolume {
     const scale = coordinateScale(coordinates.level);
+    const utm = getUtmBoundingVolume(root);
+    if (utm) return createUtmBoundingVolume(subdivideUtmExtent(utm, scheme, coordinates, scale));
     if (root.region) {
         const [west, south, east, north, minimumHeight, maximumHeight] = root.region;
         const unwrappedEast = east < west ? east + Math.PI * 2 : east;
@@ -141,7 +174,7 @@ export function subdivideImplicitBoundingVolume(
             ],
         };
     }
-    throw new Error("Implicit tiling requires a box or region bounding volume.");
+    throw new Error("Implicit tiling requires a box, region or SPACEXR_bounding_volume_utm bounding volume.");
 }
 
 export function computeImplicitTile(

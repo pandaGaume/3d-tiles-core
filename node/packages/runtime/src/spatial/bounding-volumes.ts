@@ -4,7 +4,7 @@ import type { Box, Region, Sphere } from "@spacexr/3d-tiles-core";
 import type { IAxisAlignedBox, IBoundingSphere3, IEcefSpatialState, IVector3 } from "./ecef-types";
 import { maximumScale, transformPoint, transformVector, vectorLength } from "./matrix";
 
-type EcefBounds = Pick<IEcefSpatialState, "boundingBox" | "boundingSphere">;
+export type EcefBounds = Pick<IEcefSpatialState, "boundingBox" | "boundingSphere">;
 
 export function boundsFromBox(box: Box, matrix: Float64Array): EcefBounds {
     const center = transformPoint(matrix, { x: box[0], y: box[1], z: box[2] });
@@ -82,7 +82,13 @@ function regionSamples(region: Region): Array<readonly [number, number, number]>
 }
 
 export function boundsFromRegion(region: Region, system: GeodeticSystem): EcefBounds {
-    const points = regionSamples(region).map(([longitude, latitude, height]) => system.geodeticRadiansToEcef(latitude, longitude, height));
+    return boundsFromPoints(
+        regionSamples(region).map(([longitude, latitude, height]) => system.geodeticRadiansToEcef(latitude, longitude, height)),
+    );
+}
+
+/** Axis-aligned box and enclosing sphere of a set of ECEF sample points. */
+export function boundsFromPoints(points: readonly IVector3[]): EcefBounds {
     const min = { x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY, z: Number.POSITIVE_INFINITY };
     const max = { x: Number.NEGATIVE_INFINITY, y: Number.NEGATIVE_INFINITY, z: Number.NEGATIVE_INFINITY };
     for (const point of points) {
