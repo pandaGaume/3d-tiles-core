@@ -17,8 +17,6 @@ The repository is organized by target language so the same contracts can later b
 node/packages/core/  TypeScript interfaces, codecs and validation
 node/packages/runtime/ Renderer-neutral traversal, loading and presentation lifecycle
 node/packages/tiles/ Web tile addressing, HTTP tile sources and DEM codecs (XYZ, TMS, quadkey, Terrarium)
-node/examples/babylon-google-3d-tiles/ Babylon.js and Google Photorealistic 3D Tiles example
-node/examples/babylon-implicit-geodesic-grid/ Renderer-neutral pipeline proof with ellipsoid-projected Babylon grids
 conformance/         Shared positive and negative conformance fixtures, including SPACEXR_bounding_volume_utm
 dotnet/              Reserved for the future .NET implementation
 cpp/                 Reserved for the future C++ and Unreal implementation
@@ -48,13 +46,9 @@ npm run check
 
 The Node workspace publishes `@spacexr/3d-tiles-core`, `@spacexr/tiles` and `@spacexr/3d-tiles-runtime` under the `pandaGaume` GitHub organization. `@spacexr/tiles` is independent of 3D Tiles; the runtime depends on it to expose web map and DEM pyramids as implicit tilesets.
 
-## Babylon.js example
+## Babylon.js
 
-The first renderer integration uses Babylon.js 9 with its native `GeospatialCamera`, large-world rendering and Google Photorealistic 3D Tiles. Its Google Map Tiles API key is read from an untracked `.env` file and is never embedded in repository source files.
-
-See [Babylon.js and Google Photorealistic 3D Tiles](node/examples/babylon-google-3d-tiles/README.md) for Google Cloud setup, attribution requirements and local execution.
-
-The [implicit geodesic grid example](node/examples/babylon-implicit-geodesic-grid/README.md) demonstrates the split activation and presentation pipeline without an API key. It shares normalized grid topology and projects unique per-tile geometry onto WGS84 from standard implicit regions. A later shader path can move projection to the GPU and use instances without changing the runtime contracts.
+The Babylon.js 9 integration lives in [3d-tiles-babylon](https://github.com/pandaGaume/3d-tiles-babylon): the `@spacexr/3d-tiles-babylon` package, which binds the runtime to Babylon cameras, the render loop and glTF content, and the Google Photorealistic 3D Tiles and implicit geodesic grid examples.
 
 The project evaluated Babylon Lite as an alternative renderer and retained Babylon.js with WebGPU as the reference implementation. See [Renderer evaluation and decision](docs/renderer-evaluation.md) for the measurements and navigation findings.
 

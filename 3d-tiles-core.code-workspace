@@ -13,12 +13,24 @@
             "path": "node/packages/runtime"
         },
         {
-            "name": "🌍 Babylon Google 3D Tiles",
-            "path": "node/examples/babylon-google-3d-tiles"
+            "name": "🧩 3D Tiles Grid",
+            "path": "node/packages/grid"
+        },
+        {
+            "name": "🏔️ 3D Tiles DEM",
+            "path": "node/packages/dem"
+        },
+        {
+            "name": "🧊 3D Tiles Babylon",
+            "path": "../3d-tiles-babylon"
+        },
+        {
+            "name": "🏙️ Babylon Google 3D Tiles",
+            "path": "../3d-tiles-babylon/examples/babylon-google-3d-tiles"
         },
         {
             "name": "🔷 Babylon Implicit Grid",
-            "path": "node/examples/babylon-implicit-geodesic-grid"
+            "path": "../3d-tiles-babylon/examples/babylon-implicit-geodesic-grid"
         },
         {
             "name": "🌐 Geodesy",
@@ -150,7 +162,7 @@
                 "type": "shell",
                 "command": "npm run dev",
                 "options": {
-                    "cwd": "${workspaceFolder:🌍 Babylon Google 3D Tiles}"
+                    "cwd": "${workspaceFolder:🏙️ Babylon Google 3D Tiles}"
                 },
                 "isBackground": true,
                 "problemMatcher": []
@@ -160,7 +172,7 @@
                 "type": "shell",
                 "command": "npm run build",
                 "options": {
-                    "cwd": "${workspaceFolder:🌍 Babylon Google 3D Tiles}"
+                    "cwd": "${workspaceFolder:🏙️ Babylon Google 3D Tiles}"
                 },
                 "problemMatcher": ["$tsc"]
             },
@@ -169,7 +181,7 @@
                 "type": "shell",
                 "command": "npm run preview",
                 "options": {
-                    "cwd": "${workspaceFolder:🌍 Babylon Google 3D Tiles}"
+                    "cwd": "${workspaceFolder:🏙️ Babylon Google 3D Tiles}"
                 },
                 "isBackground": true,
                 "problemMatcher": []

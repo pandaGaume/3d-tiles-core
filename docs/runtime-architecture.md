@@ -197,4 +197,4 @@ The resolved `IMetadataSnapshot` is passed to content attachment and glyph publi
 
 ## Current boundary
 
-The generic runtime owns traversal, availability and resource lifecycle. Web tile addressing, HTTP tile sources and DEM decoding live in the renderer-neutral `@spacexr/tiles` package, which adapters call from their activation port. Rendering, glTF decoding, terrain grid creation, shader selection and engine-specific resource pooling remain responsibilities of an adaptation package such as a future `@spacexr/3d-tiles-babylon`.
+The generic runtime owns traversal, availability and resource lifecycle. Web tile addressing, HTTP tile sources and DEM decoding live in the renderer-neutral `@spacexr/tiles` package, which adapters call from their activation port. Rendering, glTF decoding, terrain grid creation, shader selection and engine-specific resource pooling remain responsibilities of an adaptation package such as `@spacexr/3d-tiles-babylon`, maintained in [3d-tiles-babylon](https://github.com/pandaGaume/3d-tiles-babylon).

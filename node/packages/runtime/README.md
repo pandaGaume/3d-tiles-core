@@ -43,7 +43,7 @@ New renderer integrations can replace the legacy combined content adapter with t
 
 `Tile3D` stores selection, readiness, presentation and metadata states as numeric enums. Metadata is addressed with compact numeric handles, with `NO_METADATA = -1`. Applications push immutable camera frames and their frustum with `onCameraChanged`, then call `processFrame`.
 
-The example `node/examples/babylon-implicit-geodesic-grid` proves the boundary without using the legacy content adapter. Babylon shares only normalized grid topology, then creates unique ECEF geometry for selected implicit tiles using their geographic regions and WGS84. The same boundary allows a later shader implementation to project instanced topology on the GPU.
+The implicit geodesic grid example of [3d-tiles-babylon](https://github.com/pandaGaume/3d-tiles-babylon) proves the boundary without using the legacy content adapter. Babylon shares only normalized grid topology, then creates unique ECEF geometry for selected implicit tiles using their geographic regions and WGS84. The same boundary allows a later shader implementation to project instanced topology on the GPU.
 
 ## ECEF and geodetic systems
 

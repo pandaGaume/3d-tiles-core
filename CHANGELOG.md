@@ -35,3 +35,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - `@spacexr/geodesy` is installed from the npm registry instead of a vendored archive.
 - Conformance tests compare the exact set of diagnostic codes reported for each fixture.
 - Web Mercator tile metrics moved from the runtime to `@spacexr/tiles`; the runtime re-exports them. `getLatLonToTileXY` now keeps the east and south map edges inside the pyramid.
+
+### Removed
+
+- The Babylon.js examples moved to [3d-tiles-babylon](https://github.com/pandaGaume/3d-tiles-babylon), together with the new `@spacexr/3d-tiles-babylon` package extracted from them.
