@@ -156,9 +156,12 @@ The content port receives `implicitCoordinates`, the synthesized tile bounding v
 
 Screen-space-error refinement decides each tile on its own, so two neighbouring branches can be displayed several levels apart, for example close to a grazing camera. Terrain grids can only connect edges one level apart. With `quadtreeBalance`, the runtime keeps the displayed tiles of implicit QUADTREE tilesets within one level of their edge neighbours (2:1 balance):
 
-1. after the traversal of a frame, for each displayed tile of level `L` and each edge neighbour at level `L`, every ancestor of that neighbour at level `L - 2` or coarser is marked for refinement;
-2. the next traversal refines the marked tiles even when their screen-space error does not require it, with the usual hole-free REPLACE transition;
-3. a frame is requested whenever the marks change, so a refinement that unbalances further neighbours is resolved on the following frames, one level at a time. The marks disappear when the finer tile coarsens.
+1. each frame starts from the screen-space error selection. For each selected tile of level `L` and each edge neighbour at level `L`, every ancestor of that neighbour at level `L - 2` or coarser is marked for refinement;
+2. the traversal is repeated, refining the marked tiles even when their screen-space error does not require it. Marks only accumulate within a frame, so the passes converge, and a refinement that unbalances further neighbours is resolved by the next pass;
+3. a marked tile whose children are not ready keeps the finer tiles already displayed in its place rather than falling back to a coarser ready tile, and its children load before any tile chosen by screen-space error alone;
+4. when a tile still sits next to one two or more levels coarser, because that neighbour cannot refine yet, the refinement waits: an ancestor of the fine tile stays displayed instead, the one a level above the neighbour or else the one at the neighbour's level, whichever is ready first, and the traversal is repeated. The refinement resumes in the frame where the neighbour's children are ready.
+
+A jump of two levels can only remain when neither the neighbour's children nor these ancestors are ready, which only happens before the first loads. Such edges are identified: `IRuntimeFrameResult.unbalanced` lists the finer tile and the level of its coarse neighbour, a `quadtree-imbalance` event announces them, and `nodes.unbalanced` counts them in the runtime statistics, so that an adapter can hide them, for example with skirts on those edges only.
 
 Diagonal neighbours do not constrain a tile, because tile corners exist at every level. Neighbours follow the `TileNeighbor` layout of `@spacexr/tiles`. When the implicit resolver implements `addressOf`, as `ImplicitTilesetDecorator` does, tiles are located in the pyramid shared by several implicit tilesets and balanced across their roots; `wrapX` also connects the antimeridian of a global pyramid. Otherwise each implicit tileset is balanced on its own coordinates. Explicit tilesets have no neighbour definition and are not balanced.
 

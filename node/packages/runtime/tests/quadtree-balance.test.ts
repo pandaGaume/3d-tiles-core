@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { IContentLoadContext, IRuntimeAdapter, ISpatialDerivationContext, ISpatialMetric } from "../src";
-import { DenseImplicitSubtreeLoader, TileRuntime, createWebMapImplicitSource, quadtreeBalanceRefinements } from "../src";
+import {
+    DenseImplicitSubtreeLoader,
+    TileRuntime,
+    createWebMapImplicitSource,
+    quadtreeBalanceRefinements,
+    quadtreeImbalances,
+} from "../src";
 
 describe("quadtreeBalanceRefinements", () => {
     it("refines every ancestor of an edge neighbour two or more levels coarser", () => {
@@ -57,31 +63,7 @@ class FocusMetric implements ISpatialMetric<ICamera, ISpatial> {
     }
 }
 
-async function selectedLevels(quadtreeBalance: boolean) {
-    const source = createWebMapImplicitSource({ urlTemplates: "grid://{z}/{x}/{y}", maximumZoom: 3, subtreeLevels: 4 });
-    const adapter: IRuntimeAdapter<ICamera, ISpatial, string, never> = {
-        tilesets: { load: async () => ({ tileset: source.tileset }) },
-        subtrees: new DenseImplicitSubtreeLoader(),
-        implicitTiles: source.resolver,
-        spatial: new FocusMetric(),
-        content: {
-            load: async (context: IContentLoadContext<ISpatial>) => ({ kind: "renderable", handle: context.uri }),
-            attach: () => undefined,
-            detach: () => undefined,
-        },
-    };
-    const runtime = new TileRuntime({
-        id: "balance",
-        uri: "memory://balance/tileset.json",
-        adapter,
-        maxScreenSpaceError: 1,
-        quadtreeBalance,
-    });
-    // Just west of the prime meridian: the deepest tiles touch the eastern half of the map.
-    await runtime.update({ focus: [-0.01, 0.3] });
-    await runtime.whenIdle();
-
-    const tiles = runtime.selectedTiles.map((tile) => source.dataSource.addressOf(tile.implicit!.coordinates));
+function largestEdgeJump(tiles: ReadonlyArray<{ lod: number; x: number; y: number }>): number {
     let largestJump = 0;
     for (const tile of tiles) {
         for (const other of tiles) {
@@ -95,8 +77,47 @@ async function selectedLevels(quadtreeBalance: boolean) {
             if (sharesEdge) largestJump = Math.max(largestJump, Math.abs(tile.lod - other.lod));
         }
     }
+    return largestJump;
+}
+
+/** Runtime focusing just west of the prime meridian, so that the deepest tiles touch the eastern half of the map. */
+function createScenario(quadtreeBalance: boolean, delayed?: (address: { lod: number; x: number; y: number }) => Promise<void> | undefined) {
+    const source = createWebMapImplicitSource({ urlTemplates: "grid://{z}/{x}/{y}", maximumZoom: 3, subtreeLevels: 4 });
+    const adapter: IRuntimeAdapter<ICamera, ISpatial, string, never> = {
+        tilesets: { load: async () => ({ tileset: source.tileset }) },
+        subtrees: new DenseImplicitSubtreeLoader(),
+        implicitTiles: source.resolver,
+        spatial: new FocusMetric(),
+        content: {
+            load: async (context: IContentLoadContext<ISpatial>) => {
+                await delayed?.(source.dataSource.addressOf(context.implicitCoordinates!));
+                return { kind: "renderable", handle: context.uri };
+            },
+            attach: () => undefined,
+            detach: () => undefined,
+        },
+    };
+    const runtime = new TileRuntime({
+        id: "balance",
+        uri: "memory://balance/tileset.json",
+        adapter,
+        maxScreenSpaceError: 1,
+        quadtreeBalance,
+        // More load slots than delayed tiles, so that the delayed loads do not block the others.
+        maxConcurrentLoads: 8,
+    });
+    const camera: ICamera = { focus: [-0.01, 0.3] };
+    const selected = () => runtime.selectedTiles.map((tile) => source.dataSource.addressOf(tile.implicit!.coordinates));
+    return { runtime, camera, selected };
+}
+
+async function selectedLevels(quadtreeBalance: boolean) {
+    const { runtime, camera, selected } = createScenario(quadtreeBalance);
+    await runtime.update(camera);
+    await runtime.whenIdle();
+    const tiles = selected();
     await runtime.dispose();
-    return { levels: tiles.map((tile) => tile.lod), largestJump };
+    return { levels: tiles.map((tile) => tile.lod), largestJump: largestEdgeJump(tiles) };
 }
 
 describe("TileRuntime quadtree balance", () => {
@@ -112,5 +133,72 @@ describe("TileRuntime quadtree balance", () => {
 
         expect(Math.max(...levels)).toBe(3);
         expect(largestJump).toBe(1);
+    });
+
+    it("holds a refinement that a neighbour cannot follow until the neighbour is ready", async () => {
+        // The eastern level 2 tiles, which the balance requires next to the focus, load late.
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        const { runtime, camera, selected } = createScenario(true, (address) => (address.lod === 2 && address.x >= 2 ? gate : undefined));
+
+        for (let frame = 0; frame < 40; frame++) {
+            await runtime.update(camera);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        const waiting = selected();
+        expect(largestEdgeJump(waiting)).toBe(1);
+        expect(Math.max(...waiting.map((tile) => tile.lod))).toBe(2);
+
+        release();
+        await runtime.update(camera);
+        await runtime.whenIdle();
+        const ready = selected();
+        expect(largestEdgeJump(ready)).toBe(1);
+        expect(Math.max(...ready.map((tile) => tile.lod))).toBe(3);
+        await runtime.dispose();
+    });
+});
+
+describe("TileRuntime quadtree imbalance reporting", () => {
+    it("reports the edges left unbalanced in each frame, and none once balanced", async () => {
+        const { runtime, camera } = createScenario(true);
+        const frames: number[] = [];
+        const imbalanceEvents: number[] = [];
+        runtime.events.subscribe((event) => {
+            if (event.type === "frame") frames.push(event.result.unbalanced.length);
+            if (event.type === "quadtree-imbalance") imbalanceEvents.push(event.imbalances.length);
+        });
+
+        await runtime.update(camera);
+        await runtime.whenIdle();
+        const result = await runtime.update(camera);
+
+        expect(result.unbalanced).toEqual([]);
+        expect(runtime.instrumentation.snapshot().nodes.unbalanced).toBe(0);
+        // Every reported imbalance was announced by an event in the same frame.
+        expect(imbalanceEvents).toEqual(frames.filter((count) => count > 0));
+        await runtime.dispose();
+    });
+
+    it("reports nothing without quadtree balance", async () => {
+        const { runtime, camera } = createScenario(false);
+        await runtime.update(camera);
+        await runtime.whenIdle();
+
+        expect((await runtime.update(camera)).unbalanced).toEqual([]);
+        await runtime.dispose();
+    });
+});
+
+describe("quadtreeImbalances", () => {
+    it("reports displayed tiles next to a tile two or more levels coarser", () => {
+        const location = (lod: number, x: number, y: number) => ({ namespace: "", address: { lod, x, y }, wrapX: false });
+        const imbalances = quadtreeImbalances([
+            { location: location(3, 3, 1), value: "fine" },
+            { location: location(1, 1, 0), value: "coarse" },
+            { location: location(2, 1, 1), value: "balanced" },
+        ]);
+
+        expect(imbalances).toEqual([{ fine: "fine", coarseLod: 1 }]);
     });
 });

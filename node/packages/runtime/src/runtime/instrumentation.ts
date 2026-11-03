@@ -20,6 +20,8 @@ export interface IRuntimeNodeStatistics {
     implicit: number;
     selected: number;
     visible: number;
+    /** Selected tiles next to a tile two or more levels coarser in the last frame, with `quadtreeBalance`. */
+    unbalanced: number;
 }
 
 export interface IRuntimeContentStatistics {

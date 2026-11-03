@@ -1,6 +1,6 @@
 import type { IMetadataSnapshot } from "../metadata/types";
 import type { IRuntimeImplicitSubtree } from "../implicit/types";
-import type { IRuntimeContent, IRuntimeFrameResult, IRuntimeTile, IRuntimeTilesetDocument } from "./contracts";
+import type { IRuntimeContent, IRuntimeFrameResult, IRuntimeQuadtreeImbalance, IRuntimeTile, IRuntimeTilesetDocument } from "./contracts";
 import type { IRuntimeCacheEviction } from "./cache";
 
 export type RuntimeEvent<TSpatial, TContentHandle, TGlyphHandle> =
@@ -23,6 +23,12 @@ export type RuntimeEvent<TSpatial, TContentHandle, TGlyphHandle> =
     | { type: "subtree-state"; tile: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>; subtree: IRuntimeImplicitSubtree }
     | { type: "metadata-resolved"; tile: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>; snapshot: IMetadataSnapshot }
     | { type: "cache-eviction"; eviction: IRuntimeCacheEviction }
+    /** The selected cut still joins levels two or more apart on some edges; see `IRuntimeFrameResult.unbalanced`. */
+    | {
+          type: "quadtree-imbalance";
+          frame: number;
+          imbalances: readonly IRuntimeQuadtreeImbalance<TSpatial, TContentHandle, TGlyphHandle>[];
+      }
     | { type: "error"; phase: string; error: unknown; tileId?: string; contentId?: string };
 
 export type RuntimeEventListener<TSpatial, TContentHandle, TGlyphHandle> = (
