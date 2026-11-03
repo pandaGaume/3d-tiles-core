@@ -1,16 +1,16 @@
-/** Decoded image with 8-bit RGBA pixels, row-major from the top-left corner. */
-export interface IRgbaImage {
-    width: number;
-    height: number;
-    /** `width * height * 4` bytes in R, G, B, A order, not premultiplied. */
-    data: Uint8Array | Uint8ClampedArray;
+import type { IRasterGrid } from "./raster-grid";
+
+/** Decoded image with 8-bit RGBA pixels, row-major from the top-left corner: a raster of four channels. */
+export interface IRgbaImage extends IRasterGrid<Uint8Array | Uint8ClampedArray> {
+    /** R, G, B, A, not premultiplied. */
+    channels: 4;
 }
 
 /**
  * Port decoding encoded image bytes (PNG, WebP, JPEG) into RGBA pixels.
  *
  * Implementations must return the stored pixel values unchanged: no colour space conversion and no alpha
- * premultiplication, otherwise encoded elevations are corrupted.
+ * premultiplication, otherwise values encoded in the pixels, such as elevations, are corrupted.
  */
 export interface IImageDecoder {
     decode(bytes: Uint8Array, signal?: AbortSignal): Promise<IRgbaImage>;
@@ -36,7 +36,7 @@ export class BrowserImageDecoder implements IImageDecoder {
             if (!context) throw new TypeError("OffscreenCanvas 2D context is not available.");
             context.drawImage(bitmap, 0, 0);
             const image = context.getImageData(0, 0, bitmap.width, bitmap.height);
-            return { width: image.width, height: image.height, data: image.data };
+            return { width: image.width, height: image.height, channels: 4, data: image.data };
         } finally {
             bitmap.close();
         }

@@ -16,7 +16,9 @@ The repository is organized by target language so the same contracts can later b
 ```text
 node/packages/core/  TypeScript interfaces, codecs and validation
 node/packages/runtime/ Renderer-neutral traversal, loading and presentation lifecycle
-node/packages/tiles/ Web tile addressing, HTTP tile sources and DEM codecs (XYZ, TMS, quadkey, Terrarium)
+node/packages/tiles/ Web tile addressing, neighbours, tile pyramids and HTTP tile sources (XYZ, TMS, quadkey)
+node/packages/raster/ Tile rasters: sampling, image decoding, seamless stitching and raster pyramids
+node/packages/dem/   Digital elevation models: Terrarium and Terrain-RGB codecs, statistics, continuous surfaces
 node/packages/grid/  Normalized terrain grid topologies with junctions between levels of detail
 conformance/         Shared positive and negative conformance fixtures, including SPACEXR_bounding_volume_utm
 dotnet/              Reserved for the future .NET implementation
@@ -45,11 +47,11 @@ npm ci
 npm run check
 ```
 
-The Node workspace publishes `@spacexr/3d-tiles-core`, `@spacexr/tiles`, `@spacexr/grid` and `@spacexr/3d-tiles-runtime` under the `pandaGaume` GitHub organization. `@spacexr/tiles` is independent of 3D Tiles; the runtime depends on it to expose web map and DEM pyramids as implicit tilesets. `@spacexr/grid` builds terrain grid topologies for those tiles, independent of 3D Tiles and of any renderer; see [Terrain grids](docs/grid.md).
+The Node workspace publishes `@spacexr/3d-tiles-core`, `@spacexr/tiles`, `@spacexr/raster`, `@spacexr/dem`, `@spacexr/grid` and `@spacexr/3d-tiles-runtime` under the `pandaGaume` GitHub organization. `@spacexr/tiles` is independent of 3D Tiles and of the tile content; the runtime depends on it to expose web map and DEM pyramids as implicit tilesets. `@spacexr/raster` adds rasters of any kind to those tiles, imagery and elevation alike, and `@spacexr/dem` elevation models on top of it; see [Web tiles](docs/tiles.md), [Rasters](docs/raster.md) and [Digital elevation models](docs/dem.md). `@spacexr/grid` builds terrain grid topologies for those tiles, independent of 3D Tiles and of any renderer; see [Terrain grids](docs/grid.md).
 
 ## Babylon.js
 
-The Babylon.js 9 integration lives in [3d-tiles-babylon](https://github.com/pandaGaume/3d-tiles-babylon): the `@spacexr/3d-tiles-babylon` package, which binds the runtime to Babylon cameras, the render loop and glTF content, and the Google Photorealistic 3D Tiles and implicit geodesic grid examples.
+The Babylon.js 9 integration lives in [3d-tiles-babylon](https://github.com/pandaGaume/3d-tiles-babylon): the `@spacexr/3d-tiles-babylon` package, which binds the runtime to Babylon cameras, the render loop and glTF content, and the Google Photorealistic 3D Tiles and Mapzen implicit grid examples.
 
 The project evaluated Babylon Lite as an alternative renderer and retained Babylon.js with WebGPU as the reference implementation. See [Renderer evaluation and decision](docs/renderer-evaluation.md) for the measurements and navigation findings.
 

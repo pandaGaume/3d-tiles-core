@@ -29,8 +29,8 @@
             "path": "../3d-tiles-babylon/examples/babylon-google-3d-tiles"
         },
         {
-            "name": "🔷 Babylon Implicit Grid",
-            "path": "../3d-tiles-babylon/examples/babylon-implicit-geodesic-grid"
+            "name": "🔷 Babylon Implicit Grid Mapzen",
+            "path": "../3d-tiles-babylon/examples/babylon-implicit-grid-mapzen"
         },
         {
             "name": "🌐 Geodesy",

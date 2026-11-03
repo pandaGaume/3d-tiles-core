@@ -1,39 +1,8 @@
+import { rasterRangeInArea, type IImageDecoder } from "@spacexr/raster";
+import type { FetchFunction } from "@spacexr/tiles";
 import { describe, expect, it } from "vitest";
 
-import {
-    DemInfos,
-    Tile,
-    WebMercatorTileMetrics,
-    computeGridNormals,
-    createHeightGrid,
-    createMapzenTerrariumSource,
-    LocalDemDecoder,
-    loadDemTile,
-    heightRangeInArea,
-    sampleHeightBilinear,
-    type FetchFunction,
-    type IImageDecoder,
-} from "../src";
-
-const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 15 });
-
-describe("Tile", () => {
-    it("derives its quadkey, key and bounds from the metrics", () => {
-        const tile = new Tile({ lod: 1, x: 0, y: 0 }, metrics, "content", "imagery");
-        expect(tile.quadkey).toBe("0");
-        expect(tile.key).toBe("imagery:0");
-        expect(tile.geoBounds.west).toBeCloseTo(-180, 9);
-        expect(tile.geoBounds.east).toBeCloseTo(0, 9);
-        expect(tile.geoBounds.south).toBeCloseTo(0, 9);
-        expect(tile.geoBounds.north).toBeCloseTo(85.0511287798066, 9);
-        expect(tile.pixelBounds).toEqual({ x: 0, y: 0, width: 256, height: 256 });
-        expect(tile.content).toBe("content");
-    });
-
-    it("rejects addresses outside their level", () => {
-        expect(() => new Tile({ lod: 1, x: 2, y: 0 }, metrics)).toThrow(RangeError);
-    });
-});
+import { DemInfos, computeGridNormals, createHeightGrid, createMapzenTerrariumSource, LocalDemDecoder, loadDemTile } from "../src";
 
 function grid(width: number, values: number[]): DemInfos {
     return new DemInfos(createHeightGrid(width, values.length / width, new Float32Array(values)));
@@ -63,11 +32,11 @@ describe("DemInfos", () => {
         const normals = new Float32Array(heights.flatMap((value) => [value, 0, 1]));
         const infos = new DemInfos(createHeightGrid(3, 3, new Float32Array(heights)), normals);
         const view = infos.view(1, 1, 2, 2);
-        expect([...view.heights]).toEqual([4, 5, 7, 8]);
+        expect([...view.data]).toEqual([4, 5, 7, 8]);
         expect([...view.normals!].filter((_, index) => index % 3 === 0)).toEqual([4, 5, 7, 8]);
         expect(view).toMatchObject({ minimum: 4, maximum: 8, mean: 6 });
-        view.heights[0] = 99;
-        expect(infos.heights[4]).toBe(4);
+        view.data[0] = 99;
+        expect(infos.data[4]).toBe(4);
         expect(() => infos.view(2, 2, 2, 2)).toThrow(RangeError);
     });
 
@@ -110,6 +79,7 @@ describe("loadDemTile", () => {
                 width: 2,
                 height: 2,
                 // Terrarium heights 0, 1, 2 and 3 m.
+                channels: 4,
                 data: new Uint8ClampedArray([128, 0, 0, 255, 128, 1, 0, 255, 128, 2, 0, 255, 128, 3, 0, 255]),
             }),
     };
@@ -125,35 +95,6 @@ describe("loadDemTile", () => {
     it("returns undefined for an absent tile", async () => {
         const fetch: FetchFunction = () => Promise.resolve(new Response(null, { status: 404 }));
         await expect(loadDemTile(createMapzenTerrariumSource({ client: { fetch } }), { lod: 3, x: 2, y: 3 }, new LocalDemDecoder(decoder))).resolves.toBeUndefined();
-    });
-});
-
-describe("sampleHeightBilinear", () => {
-    // 2 x 2 grid: pixel centres at u, v = 0.25 and 0.75.
-    const grid = createHeightGrid(2, 2, new Float32Array([0, 10, 20, 30]));
-
-    it("returns pixel values at pixel centres and clamps to the edge samples", () => {
-        expect(sampleHeightBilinear(grid, 0.25, 0.25)).toBe(0);
-        expect(sampleHeightBilinear(grid, 0.75, 0.75)).toBe(30);
-        expect(sampleHeightBilinear(grid, 0, 0)).toBe(0);
-        expect(sampleHeightBilinear(grid, 1, 1)).toBe(30);
-    });
-
-    it("interpolates between pixel centres", () => {
-        expect(sampleHeightBilinear(grid, 0.5, 0.25)).toBe(5);
-        expect(sampleHeightBilinear(grid, 0.5, 0.5)).toBe(15);
-    });
-
-    it("ignores missing neighbours and returns NaN only when all are missing", () => {
-        const gap = createHeightGrid(2, 2, new Float32Array([Number.NaN, 10, 20, 30]));
-        expect(sampleHeightBilinear(gap, 0.5, 0.5)).toBe(20);
-        // Exactly on the missing pixel: falls back to the nearest valid corner.
-        expect(sampleHeightBilinear(gap, 0.25, 0.25)).toBe(10);
-        expect(sampleHeightBilinear(createHeightGrid(1, 1, new Float32Array([Number.NaN])), 0.5, 0.5)).toBeNaN();
-    });
-
-    it("handles single-sample grids", () => {
-        expect(sampleHeightBilinear(createHeightGrid(1, 1, new Float32Array([7])), 0.9, 0.1)).toBe(7);
     });
 });
 
@@ -178,30 +119,11 @@ describe("quadrant height ranges", () => {
         ]);
     });
 
-    it("matches heightRangeInArea on the halves", () => {
-        expect(heightRangeInArea(infos, 0, 0, 0.5, 0.5)).toEqual(infos.quadrants[0]);
-        expect(heightRangeInArea(infos, 0.5, 0.5, 1, 1)).toEqual(infos.quadrants[3]);
-        expect(heightRangeInArea(infos, 0, 0, 1, 1)).toEqual({ minimum: -5, maximum: 99 });
-        expect(() => heightRangeInArea(infos, 0.6, 0, 0.4, 1)).toThrow(RangeError);
-    });
-
-    it("bounds every bilinear sample taken inside an area", () => {
-        const random = (() => {
-            let seed = 7;
-            return () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
-        })();
-        const values = Array.from({ length: 64 }, () => Math.round(random() * 4000));
-        const grid = createHeightGrid(8, 8, new Float32Array(values));
-        for (let trial = 0; trial < 200; trial++) {
-            const [west, east] = [random(), random()].sort((a, b) => a - b) as [number, number];
-            const [north, south] = [random(), random()].sort((a, b) => a - b) as [number, number];
-            const range = heightRangeInArea(grid, west, north, east, south);
-            for (let sample = 0; sample < 20; sample++) {
-                const height = sampleHeightBilinear(grid, west + (east - west) * random(), north + (south - north) * random());
-                expect(height).toBeGreaterThanOrEqual(range.minimum - 1e-3);
-                expect(height).toBeLessThanOrEqual(range.maximum + 1e-3);
-            }
-        }
+    it("matches rasterRangeInArea on the halves", () => {
+        expect(rasterRangeInArea(infos, 0, 0, 0.5, 0.5)).toEqual(infos.quadrants[0]);
+        expect(rasterRangeInArea(infos, 0.5, 0.5, 1, 1)).toEqual(infos.quadrants[3]);
+        expect(rasterRangeInArea(infos, 0, 0, 1, 1)).toEqual({ minimum: -5, maximum: 99 });
+        expect(() => rasterRangeInArea(infos, 0.6, 0, 0.4, 1)).toThrow(RangeError);
     });
 
     it("reports NaN bounds for quadrants without valid samples", () => {

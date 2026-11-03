@@ -1,7 +1,7 @@
 {
     "name": "@spacexr/tiles",
     "version": "0.1.0",
-    "description": "Renderer-neutral web tile addressing, tile sources and DEM codecs for XYZ, TMS and quadkey pyramids.",
+    "description": "Renderer-neutral web tile addressing, neighbours, on-demand tile pyramids, URL templates and HTTP tile sources for XYZ, TMS and quadkey pyramids.",
     "type": "module",
     "license": "Apache-2.0",
     "author": "Guillaume Pelletier (SpaceXR)",
@@ -20,9 +20,6 @@
         "tms",
         "quadkey",
         "web-mercator",
-        "dem",
-        "terrarium",
-        "terrain-rgb",
         "spacexr"
     ],
     "engines": {
@@ -49,15 +46,15 @@
             "import": "./dist/addressing/index.js",
             "default": "./dist/addressing/index.js"
         },
+        "./pyramid": {
+            "types": "./dist/pyramid/index.d.ts",
+            "import": "./dist/pyramid/index.js",
+            "default": "./dist/pyramid/index.js"
+        },
         "./sources": {
             "types": "./dist/sources/index.d.ts",
             "import": "./dist/sources/index.js",
             "default": "./dist/sources/index.js"
-        },
-        "./codecs": {
-            "types": "./dist/codecs/index.d.ts",
-            "import": "./dist/codecs/index.js",
-            "default": "./dist/codecs/index.js"
         }
     },
     "scripts": {

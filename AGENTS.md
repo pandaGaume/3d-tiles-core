@@ -11,7 +11,7 @@ Read this file before modifying the repository.
 
 ## Current scope
 
-The core package contains serializable 3D Tiles interfaces, JSON codecs and structural validation. The runtime package contains renderer-neutral traversal and mutable streaming state behind explicit ports. The grid package contains renderer-neutral terrain grid topologies built on the tile definitions of the tiles package.
+The core package contains serializable 3D Tiles interfaces, JSON codecs and structural validation. The runtime package contains renderer-neutral traversal and mutable streaming state behind explicit ports. The tiles package contains content-neutral tile addressing, neighbours, pyramids and HTTP sources. The raster package contains tile rasters of any meaning, imagery and elevation alike, and the dem package elevation models built on rasters. The grid package contains renderer-neutral terrain grid topologies built on the tile definitions of the tiles package.
 
 Keep these layers separate:
 

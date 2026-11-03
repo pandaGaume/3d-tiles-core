@@ -1,4 +1,5 @@
-import { Tile, type ITileAddress } from "../addressing";
+import { Tile, type ITileAddress } from "@spacexr/tiles";
+
 import { DemInfos, computeGridNormals, type IDecodeHeightGridOptions, type IDemDecoder } from "../codecs";
 import type { IDemTileSource } from "./presets";
 

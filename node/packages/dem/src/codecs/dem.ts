@@ -1,4 +1,4 @@
-import type { IImageDecoder, IRgbaImage } from "./image";
+import { assertRasterSize, type IImageDecoder, type IRasterGrid, type IRgbaImage } from "@spacexr/raster";
 
 /**
  * Encoding of elevations in the pixels of a DEM tile.
@@ -34,14 +34,12 @@ export function heightPixelDecoder(encoding: DemEncoding): HeightPixelDecoder {
 }
 
 /**
- * Regular grid of heights.
+ * Regular grid of heights in metres: a raster of one channel.
  *
  * Samples are row-major from the north-west corner. Missing samples are `NaN`.
  */
-export interface IHeightGrid {
-    width: number;
-    height: number;
-    heights: Float32Array;
+export interface IHeightGrid extends IRasterGrid<Float32Array> {
+    channels: 1;
     /** Smallest valid height, or `NaN` when every sample is missing. */
     minimum: number;
     /** Largest valid height, or `NaN` when every sample is missing. */
@@ -51,13 +49,12 @@ export interface IHeightGrid {
 }
 
 /** Builds a height grid, computing its range over the valid samples. */
-export function createHeightGrid(width: number, height: number, heights: Float32Array): IHeightGrid {
-    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) throw new RangeError("Grid dimensions must be positive integers.");
-    if (heights.length !== width * height) throw new RangeError(`Expected ${width * height} heights, received ${heights.length}.`);
+export function createHeightGrid(width: number, height: number, data: Float32Array): IHeightGrid {
+    assertRasterSize(width, height, 1, data.length);
     let minimum = Number.POSITIVE_INFINITY;
     let maximum = Number.NEGATIVE_INFINITY;
     let noDataCount = 0;
-    for (const value of heights) {
+    for (const value of data) {
         if (Number.isNaN(value)) {
             noDataCount++;
             continue;
@@ -65,8 +62,8 @@ export function createHeightGrid(width: number, height: number, heights: Float32
         if (value < minimum) minimum = value;
         if (value > maximum) maximum = value;
     }
-    if (noDataCount === heights.length) return { width, height, heights, minimum: Number.NaN, maximum: Number.NaN, noDataCount };
-    return { width, height, heights, minimum, maximum, noDataCount };
+    if (noDataCount === data.length) return { width, height, channels: 1, data, minimum: Number.NaN, maximum: Number.NaN, noDataCount };
+    return { width, height, channels: 1, data, minimum, maximum, noDataCount };
 }
 
 /** Options of {@link decodeHeightGrid}. */

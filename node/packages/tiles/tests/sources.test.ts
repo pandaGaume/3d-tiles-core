@@ -1,13 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
-    MAPZEN_TERRARIUM_ATTRIBUTION,
     TileHttpClient,
     TileHttpError,
     TileUrlTemplateError,
     WebMercatorTileMetrics,
     WebTileSource,
-    createMapzenTerrariumSource,
     expandTileUrlTemplate,
     tileUrlTemplateVariables,
     type FetchFunction,
@@ -133,16 +131,5 @@ describe("WebTileSource", () => {
         expect(source.urlOf({ lod: 3, x: 3, y: 5 })).toBe("https://0.t/213");
         expect(() => source.urlOf({ lod: 5, x: 0, y: 0 })).toThrow(RangeError);
         expect(() => new WebTileSource({ urlTemplate: "https://t/{zoom}", metrics, client: { fetch: scriptedFetch([]).fetch } })).toThrow(TileUrlTemplateError);
-    });
-
-    it("creates the Mapzen Terrarium preset", async () => {
-        const { fetch, calls } = scriptedFetch([response(200, "png")]);
-        const { source, encoding } = createMapzenTerrariumSource({ client: { fetch } });
-        expect(encoding).toBe("terrarium");
-        expect(source.attribution).toBe(MAPZEN_TERRARIUM_ATTRIBUTION);
-        expect(source.metrics.maxLOD).toBe(15);
-        await source.fetchTile({ lod: 15, x: 9634, y: 11218 });
-        expect(calls[0]!.url).toBe("https://s3.amazonaws.com/elevation-tiles-prod/terrarium/15/9634/11218.png");
-        expect(() => source.urlOf({ lod: 16, x: 0, y: 0 })).toThrow(RangeError);
     });
 });

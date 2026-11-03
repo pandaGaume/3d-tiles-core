@@ -1,7 +1,6 @@
-import { WebMercatorTileMetrics } from "../addressing";
+import { WebMercatorTileMetrics, WebTileSource, type ITileHttpClientOptions, type TileHttpClient } from "@spacexr/tiles";
+
 import type { DemEncoding } from "../codecs";
-import type { TileHttpClient, ITileHttpClientOptions } from "./tile-http-client";
-import { WebTileSource } from "./web-tile-source";
 
 /** Web tile source of elevation tiles, with the encoding of its pixels. */
 export interface IDemTileSource {

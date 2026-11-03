@@ -1,5 +1,6 @@
+import { BrowserImageDecoder, type IImageDecoder } from "@spacexr/raster";
+
 import { createHeightGrid, decodeHeightGrid, type DemEncoding, type IDecodeHeightGridOptions, type IHeightGrid } from "./dem";
-import { BrowserImageDecoder, type IImageDecoder } from "./image";
 
 /** Options of {@link IDemDecoder.decodeDem}. */
 export interface IDemDecodeOptions extends IDecodeHeightGridOptions {
@@ -38,8 +39,8 @@ export interface IDemDecodeRequest {
     transparentAsNoData?: boolean;
 }
 
-/** Response of a DEM decoder worker. `heights` is transferred. */
-export type DemDecodeResponse = { id: number; width: number; height: number; heights: Float32Array } | { id: number; error: string };
+/** Response of a DEM decoder worker. `data`, the heights, is transferred. */
+export type DemDecodeResponse = { id: number; width: number; height: number; data: Float32Array } | { id: number; error: string };
 
 /** Message endpoint of a worker scope, such as `self` in a dedicated worker. */
 export interface IDemWorkerScope {
@@ -60,7 +61,7 @@ export function installDemDecoderWorker(scope: IDemWorkerScope, decoder: IDemDec
         const { id, bytes, encoding, transparentAsNoData } = event.data;
         const options = transparentAsNoData === undefined ? {} : { transparentAsNoData };
         decoder.decodeDem(bytes, encoding, options).then(
-            (grid) => scope.postMessage({ id, width: grid.width, height: grid.height, heights: grid.heights }, [grid.heights.buffer]),
+            (grid) => scope.postMessage({ id, width: grid.width, height: grid.height, data: grid.data }, [grid.data.buffer]),
             (error: unknown) => scope.postMessage({ id, error: error instanceof Error ? error.message : String(error) }, [])
         );
     });
@@ -155,7 +156,7 @@ export class WorkerDemDecoder implements IDemDecoder {
         state.pending.delete(response.id);
         pending.signal?.removeEventListener("abort", pending.onAbort);
         if ("error" in response) pending.reject(new Error(response.error));
-        else pending.resolve(createHeightGrid(response.width, response.height, response.heights));
+        else pending.resolve(createHeightGrid(response.width, response.height, response.data));
     }
 
     private failAll(state: IWorkerState, reason: unknown): void {

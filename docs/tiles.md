@@ -1,6 +1,6 @@
 # Web tiles
 
-Rules shared by every implementation of the web tile layer (`@spacexr/tiles` for Node.js, future .NET and C++ equivalents). The layer is independent of 3D Tiles; runtimes adapt it into implicit tilesets.
+Rules shared by every implementation of the web tile layer (`@spacexr/tiles` for Node.js, future .NET and C++ equivalents). The layer is independent of 3D Tiles and of the tile content; runtimes adapt it into implicit tilesets.
 
 ## Addressing
 
@@ -56,61 +56,13 @@ An unknown variable, `{s}` without subdomains, or an application variable named 
 
 The delay before attempt `n + 1` is `min(maxDelay, initialDelay * 2^(n - 1)) + random * initialDelay`, or the `Retry-After` value, capped by `maxDelay`. Defaults: 4 attempts, 500 ms initial delay, 30 s maximum delay. Cancellation interrupts both requests and delays.
 
-## DEM encodings
+## Tile pyramids
 
-Heights are in metres.
+A tile pyramid loads the content of its tiles on demand, whatever that content is: rasters, meshes or vector data.
 
-| Encoding             | Formula                                    |
-| -------------------- | ------------------------------------------ |
-| `terrarium`          | `r * 256 + g + b / 256 - 32768`            |
-| `mapbox-terrain-rgb` | `-10000 + (r * 65536 + g * 256 + b) * 0.1` |
-| `grayscale`          | `minimum + r / 255 * (maximum - minimum)`  |
+- Each tile loads once; concurrent requests share the pending load.
+- A tile deeper than `maxLOD` is served by its ancestor at `maxLOD` (overzoom). It covers the area `west = (x - ax * 2^d) / 2^d`, `north = (y - ay * 2^d) / 2^d`, `size = 1 / 2^d` of the ancestor `(maxLOD, ax, ay)`, `d` levels above, in normalized ancestor coordinates.
+- Neighbours listed for prefetch load with every tile, at the level of the tile serving it. A missing or failing neighbour does not fail the request; a failing tile leaves the cache so that it can be retried.
+- The least recently used tiles leave the cache once it holds more than its capacity, 256 tiles by default. A tile evicted while it loads is dropped when its load completes.
 
-- Pixels must be read without colour conversion and without alpha premultiplication.
-- A pixel whose alpha is 0 is missing by default and stored as `NaN`.
-- A height grid is row-major from the north-west corner. Its minimum and maximum ignore missing samples and are `NaN` when every sample is missing.
-
-## DEM statistics and normals
-
-- `lowest` and `highest` locate the extreme valid samples by column and row; `mean` and `delta = maximum - minimum` ignore missing samples and are `NaN` when every sample is missing.
-- A view copies a rectangle of the grid, and of its normals, and recomputes the statistics.
-- Normals are unit vectors in local east, north, up axes, computed with central differences: `n = normalize(-dh/de, -dh/dn, 1)`. Rows grow southward, so `dh/dn` is the negated row gradient. Edges and samples next to missing values use one-sided differences; a sample without valid neighbours gets `(0, 0, 1)`.
-- For Web Mercator tiles, the sample spacing is the ground resolution at the tile centre latitude multiplied by `tileSize / gridWidth`, identical along rows and columns because the projection is conformal.
-
-## Sampling and stitched grids
-
-A height grid is sampled in normalized tile coordinates, `u` west to east and `v` north to south, with one of two registrations:
-
-| Registration | Sample `i` of `size` lies at | Use                                                          |
-| ------------ | ---------------------------- | ------------------------------------------------------------ |
-| `area`       | `(i + 0.5) / size`           | a DEM tile as published: each sample covers one pixel        |
-| `point`      | `i / (size - 1)`             | a stitched grid: the first and last samples lie on the edges |
-
-- Bilinear sampling clamps the sample coordinate to `[0, size - 1]` and leaves missing samples out of the weighting; the result is `NaN` only when the four samples are missing.
-- In `area` registration the last pixels lie half a pixel inside the tile, so two neighbouring DEM tiles never share a sample and their edges disagree by one pixel of terrain.
-
-A stitched grid, as in SpaceXR, adds one column and one row to a `w x h` DEM tile, `(w + 1) x (h + 1)` samples in `point` registration:
-
-- the extra column is the first column of the east neighbour `E`, the extra row the first row of the south neighbour `S`, and the extra corner the first sample of the south-east neighbour `SE`, all at the same level of detail;
-- until a neighbour is available, its part repeats the last column, the last row or the last sample of the tile itself;
-- adding a tile also fills the extra column of its west neighbour `W`, the extra row of its north neighbour `N` and the extra corner of its north-west neighbour `NW`, so the result does not depend on the arrival order;
-- neighbouring stitched grids then hold identical samples on their shared edge. A grid of `w` cells sampled in `point` registration places each vertex exactly on a sample.
-
-The height range of an area covers every sample a bilinear sample inside it can interpolate: columns `floor(west * size - 0.5)` to `ceil(east * size - 0.5)` in `area` registration, `floor(west * (size - 1))` to `ceil(east * (size - 1))` in `point` registration, and likewise for rows.
-
-## Worker decoding protocol
-
-Implementations that decode DEM tiles in workers exchange two messages:
-
-- request `{ id, bytes, encoding, transparentAsNoData? }`, with the buffer of `bytes` transferred;
-- response `{ id, width, height, heights }`, with the buffer of `heights` transferred, or `{ id, error }`.
-
-`id` is unique per pending request. A client that abandons a request ignores its response.
-
-## Presets
-
-| Preset           | URL                                                                       | Levels  | Tile size | Encoding    |
-| ---------------- | ------------------------------------------------------------------------- | ------- | --------- | ----------- |
-| Mapzen Terrarium | `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png` | 0 to 15 | 256       | `terrarium` |
-
-Mapzen Terrain Tiles require attribution of their data sources, listed at https://github.com/tilezen/joerd/blob/master/docs/attribution.md.
+Rasters and DEMs build on this pyramid; see [Rasters](raster.md) and [Digital elevation models](dem.md).

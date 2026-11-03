@@ -1,6 +1,7 @@
+import type { IImageDecoder } from "@spacexr/raster";
 import { describe, expect, it } from "vitest";
 
-import { LocalDemDecoder, WorkerDemDecoder, installDemDecoderWorker, type IDemWorkerEndpoint, type IDemWorkerScope, type IImageDecoder } from "../src";
+import { LocalDemDecoder, WorkerDemDecoder, installDemDecoderWorker, type IDemWorkerEndpoint, type IDemWorkerScope } from "../src";
 
 /** Image decoder returning one opaque Terrarium pixel per input byte, at height `byte` metres. */
 const byteHeights: IImageDecoder = {
@@ -8,6 +9,7 @@ const byteHeights: IImageDecoder = {
         Promise.resolve({
             width: bytes.length,
             height: 1,
+            channels: 4,
             data: new Uint8ClampedArray([...bytes].flatMap((value) => [128, value, 0, 255])),
         }),
 };
@@ -28,7 +30,7 @@ describe("WorkerDemDecoder", () => {
         const pending = decoder.decodeDem(bytes, "terrarium");
         expect(bytes.byteLength).toBe(0);
         const grid = await pending;
-        expect([...grid.heights]).toEqual([3, 1, 2]);
+        expect([...grid.data]).toEqual([3, 1, 2]);
         expect(grid).toMatchObject({ width: 3, height: 1, minimum: 1, maximum: 3 });
         expect(decoder.pendingCount).toBe(0);
         decoder.terminate();
@@ -38,7 +40,7 @@ describe("WorkerDemDecoder", () => {
         const decoder = new WorkerDemDecoder(channelWorker(byteHeights));
         const buffer = new Uint8Array([9, 4, 5, 9]);
         const grid = await decoder.decodeDem(buffer.subarray(1, 3), "terrarium");
-        expect([...grid.heights]).toEqual([4, 5]);
+        expect([...grid.data]).toEqual([4, 5]);
         expect(buffer.byteLength).toBe(4);
         decoder.terminate();
     });

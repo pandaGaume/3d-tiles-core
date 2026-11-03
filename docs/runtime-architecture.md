@@ -18,7 +18,7 @@ The runtime owns the algorithm. The adaptation layer owns host integration.
 | External tileset grafting                     | Yes                                | Decodes or identifies the external tileset               |
 | Implicit QUADTREE and OCTREE traversal        | Yes                                | Loads subtree resources through `IImplicitSubtreeLoader` |
 | Standard JSON and binary `.subtree` resources | Yes                                | Supplies bytes through `IByteResourceLoader`             |
-| XYZ or TMS Web Map and DEM pyramids           | Yes                                | Fetches and decodes payloads with `@spacexr/tiles`       |
+| XYZ or TMS Web Map and DEM pyramids           | Yes                                | Fetches and decodes payloads with `@spacexr/tiles`, `@spacexr/raster` and `@spacexr/dem` |
 | URI identity and relative resolution          | Yes, through `IRuntimeUriResolver` | May override resolution                                  |
 | glTF, terrain or grid preparation             | No                                 | `ITileActivationAdapter` and its readiness port          |
 | Scene attachment and placement                | No                                 | `ITilePresentationAdapter.present`                       |
@@ -210,4 +210,4 @@ The resolved `IMetadataSnapshot` is passed to content attachment and glyph publi
 
 ## Current boundary
 
-The generic runtime owns traversal, availability and resource lifecycle. Web tile addressing, HTTP tile sources and DEM decoding live in the renderer-neutral `@spacexr/tiles` package, which adapters call from their activation port. Rendering, glTF decoding, terrain grid creation, shader selection and engine-specific resource pooling remain responsibilities of an adaptation package such as `@spacexr/3d-tiles-babylon`, maintained in [3d-tiles-babylon](https://github.com/pandaGaume/3d-tiles-babylon).
+The generic runtime owns traversal, availability and resource lifecycle. Web tile addressing, tile pyramids and HTTP tile sources live in the renderer-neutral `@spacexr/tiles` package, rasters in `@spacexr/raster` and DEM decoding and surfaces in `@spacexr/dem`, which adapters call from their activation port. Rendering, glTF decoding, terrain grid creation, shader selection and engine-specific resource pooling remain responsibilities of an adaptation package such as `@spacexr/3d-tiles-babylon`, maintained in [3d-tiles-babylon](https://github.com/pandaGaume/3d-tiles-babylon).

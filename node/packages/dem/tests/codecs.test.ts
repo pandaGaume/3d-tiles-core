@@ -1,16 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type { IImageDecoder, IRgbaImage } from "@spacexr/raster";
+import { describe, expect, it } from "vitest";
 
-import {
-    BrowserImageDecoder,
-    createHeightGrid,
-    decodeDemTile,
-    decodeHeightGrid,
-    grayscaleHeight,
-    mapboxTerrainRgbHeight,
-    terrariumHeight,
-    type IImageDecoder,
-    type IRgbaImage,
-} from "../src";
+import { createHeightGrid, decodeDemTile, decodeHeightGrid, grayscaleHeight, mapboxTerrainRgbHeight, terrariumHeight } from "../src";
 
 /** Encodes a height in Terrarium pixels, the inverse of the decoder. */
 function terrariumPixel(height: number): [number, number, number, number] {
@@ -22,7 +13,7 @@ function terrariumPixel(height: number): [number, number, number, number] {
 }
 
 function image(pixels: Array<[number, number, number, number]>, width: number): IRgbaImage {
-    return { width, height: pixels.length / width, data: new Uint8ClampedArray(pixels.flat()) };
+    return { width, height: pixels.length / width, channels: 4, data: new Uint8ClampedArray(pixels.flat()) };
 }
 
 describe("DEM pixel decoders", () => {
@@ -52,8 +43,8 @@ describe("height grids", () => {
         const grid = decodeHeightGrid(image([terrariumPixel(10), terrariumPixel(-5), [128, 0, 0, 0], terrariumPixel(250)], 2), "terrarium");
         expect(grid.width).toBe(2);
         expect(grid.height).toBe(2);
-        expect([...grid.heights.slice(0, 2), grid.heights[3]]).toEqual([10, -5, 250]);
-        expect(grid.heights[2]).toBeNaN();
+        expect([...grid.data.slice(0, 2), grid.data[3]]).toEqual([10, -5, 250]);
+        expect(grid.data[2]).toBeNaN();
         expect(grid).toMatchObject({ minimum: -5, maximum: 250, noDataCount: 1 });
     });
 
@@ -69,40 +60,13 @@ describe("height grids", () => {
     });
 
     it("rejects inconsistent dimensions", () => {
-        expect(() => decodeHeightGrid({ width: 2, height: 2, data: new Uint8Array(12) }, "terrarium")).toThrow(RangeError);
+        expect(() => decodeHeightGrid({ width: 2, height: 2, channels: 4, data: new Uint8Array(12) }, "terrarium")).toThrow(RangeError);
         expect(() => createHeightGrid(3, 1, new Float32Array(2))).toThrow(RangeError);
     });
 
     it("decodes DEM tile bytes through an image decoder port", async () => {
         const decoder: IImageDecoder = { decode: () => Promise.resolve(image([terrariumPixel(1234)], 1)) };
         const grid = await decodeDemTile(new Uint8Array([1]), "terrarium", decoder);
-        expect(grid.heights[0]).toBe(1234);
-    });
-});
-
-describe("BrowserImageDecoder", () => {
-    afterEach(() => vi.unstubAllGlobals());
-
-    it("disables colour conversion and alpha premultiplication", async () => {
-        const createImageBitmap = vi.fn(() => Promise.resolve({ width: 1, height: 1, close: vi.fn() }));
-        const context = { drawImage: vi.fn(), getImageData: () => ({ width: 1, height: 1, data: new Uint8ClampedArray([128, 0, 0, 255]) }) };
-        vi.stubGlobal("createImageBitmap", createImageBitmap);
-        vi.stubGlobal(
-            "OffscreenCanvas",
-            class {
-                public getContext(): typeof context {
-                    return context;
-                }
-            }
-        );
-
-        const decoded = await new BrowserImageDecoder().decode(new Uint8Array([1, 2]));
-        expect(decoded).toEqual({ width: 1, height: 1, data: new Uint8ClampedArray([128, 0, 0, 255]) });
-        expect(createImageBitmap).toHaveBeenCalledWith(expect.any(Blob), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
-    });
-
-    it("explains when the browser APIs are unavailable", async () => {
-        vi.stubGlobal("createImageBitmap", undefined);
-        await expect(new BrowserImageDecoder().decode(new Uint8Array())).rejects.toThrow(TypeError);
+        expect(grid.data[0]).toBe(1234);
     });
 });

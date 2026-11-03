@@ -1,11 +1,9 @@
+import { sampleSpan, type IRasterRange } from "@spacexr/raster";
+
 import { createHeightGrid, type IHeightGrid } from "./dem";
-import type { HeightGridRegistration } from "./sampling";
 
 /** Height interval in metres. Both bounds are `NaN` when no valid sample is covered. */
-export interface IHeightRange {
-    minimum: number;
-    maximum: number;
-}
+export type IHeightRange = IRasterRange;
 
 /** Ranges of the four quadrants, in north-west, north-east, south-west, south-east order, like child tiles. */
 export type QuadrantHeightRanges = readonly [IHeightRange, IHeightRange, IHeightRange, IHeightRange];
@@ -33,7 +31,7 @@ export interface IDemInfos extends IHeightGrid {
     readonly delta: number;
     /**
      * Height ranges of the four quadrants, which are the extents of the child tiles.
-     * Computed in the same pass as the tile range; see {@link heightRangeInArea} for the sample footprint rule.
+     * Computed in the same pass as the tile range, with the sample footprint rule of `rasterRangeInArea`.
      */
     readonly quadrants: QuadrantHeightRanges;
     /**
@@ -54,48 +52,12 @@ function include(range: IHeightRange, value: number): void {
     if (!(value <= range.maximum)) range.maximum = value;
 }
 
-/** First sample whose bilinear influence reaches the normalized coordinate `t` from below. */
-function firstSampleAfter(t: number, size: number): number {
-    return Math.min(Math.max(Math.floor(t * size - 0.5), 0), size - 1);
-}
-
-/** Last sample whose bilinear influence reaches the normalized coordinate `t` from above. */
-function lastSampleBefore(t: number, size: number): number {
-    return Math.min(Math.max(Math.ceil(t * size - 0.5), 0), size - 1);
-}
-
-/**
- * Height range of every sample that can influence a bilinear sample taken inside an area.
- *
- * The area is given in normalized tile coordinates, `u` west to east and `v` north to south. With `area`
- * registration, sample `i` is centred at `(i + 0.5) / size`, so a position `t` interpolates samples
- * `floor(t * size - 0.5)` and the next one; with `point` registration, samples `floor(t * (size - 1))` and the next
- * one. The range therefore bounds every height {@link sampleHeightBilinear} can return in the area with the same
- * registration, which makes it a safe bounding range for an overzoomed sub-area or a child tile.
- */
-export function heightRangeInArea(grid: IHeightGrid, west: number, north: number, east: number, south: number, registration: HeightGridRegistration = "area"): IHeightRange {
-    if (!(west <= east) || !(north <= south)) throw new RangeError("The area must satisfy west <= east and north <= south.");
-    const first = (t: number, size: number) => (registration === "point" ? Math.min(Math.max(Math.floor(t * (size - 1)), 0), size - 1) : firstSampleAfter(t, size));
-    const last = (t: number, size: number) => (registration === "point" ? Math.min(Math.max(Math.ceil(t * (size - 1)), 0), size - 1) : lastSampleBefore(t, size));
-    const firstColumn = first(west, grid.width);
-    const lastColumn = last(east, grid.width);
-    const firstRow = first(north, grid.height);
-    const lastRow = last(south, grid.height);
-    const range = emptyRange();
-    for (let row = firstRow; row <= lastRow; row++) {
-        for (let column = firstColumn; column <= lastColumn; column++) {
-            const value = grid.heights[row * grid.width + column]!;
-            if (!Number.isNaN(value)) include(range, value);
-        }
-    }
-    return range;
-}
-
 /** Height grid with statistics. */
 export class DemInfos implements IDemInfos {
     public readonly width: number;
     public readonly height: number;
-    public readonly heights: Float32Array;
+    public readonly channels = 1 as const;
+    public readonly data: Float32Array;
     public readonly minimum: number;
     public readonly maximum: number;
     public readonly noDataCount: number;
@@ -117,24 +79,24 @@ export class DemInfos implements IDemInfos {
         }
         this.width = grid.width;
         this.height = grid.height;
-        this.heights = grid.heights;
+        this.data = grid.data;
         this.normals = normals;
 
         let lowestIndex = -1;
         let highestIndex = -1;
         let sum = 0;
         let count = 0;
-        // Samples influencing each half, following the footprint rule of heightRangeInArea.
-        const westLastColumn = lastSampleBefore(0.5, grid.width);
-        const eastFirstColumn = firstSampleAfter(0.5, grid.width);
-        const northLastRow = lastSampleBefore(0.5, grid.height);
-        const southFirstRow = firstSampleAfter(0.5, grid.height);
+        // Samples influencing each half, following the footprint rule of rasterRangeInArea.
+        const westLastColumn = sampleSpan(0, 0.5, grid.width).last;
+        const eastFirstColumn = sampleSpan(0.5, 1, grid.width).first;
+        const northLastRow = sampleSpan(0, 0.5, grid.height).last;
+        const southFirstRow = sampleSpan(0.5, 1, grid.height).first;
         const quadrants = [emptyRange(), emptyRange(), emptyRange(), emptyRange()] as const;
-        for (let index = 0; index < grid.heights.length; index++) {
-            const value = grid.heights[index]!;
+        for (let index = 0; index < grid.data.length; index++) {
+            const value = grid.data[index]!;
             if (Number.isNaN(value)) continue;
-            if (lowestIndex < 0 || value < grid.heights[lowestIndex]!) lowestIndex = index;
-            if (highestIndex < 0 || value > grid.heights[highestIndex]!) highestIndex = index;
+            if (lowestIndex < 0 || value < grid.data[lowestIndex]!) lowestIndex = index;
+            if (highestIndex < 0 || value > grid.data[highestIndex]!) highestIndex = index;
             sum += value;
             count++;
             const column = index % grid.width;
@@ -151,7 +113,7 @@ export class DemInfos implements IDemInfos {
             }
         }
         this.quadrants = quadrants;
-        this.noDataCount = grid.heights.length - count;
+        this.noDataCount = grid.data.length - count;
         this.lowest = lowestIndex < 0 ? undefined : this.sample(lowestIndex);
         this.highest = highestIndex < 0 ? undefined : this.sample(highestIndex);
         this.minimum = this.lowest?.height ?? Number.NaN;
@@ -169,14 +131,14 @@ export class DemInfos implements IDemInfos {
         const normals = this.normals ? new Float32Array(width * height * 3) : undefined;
         for (let line = 0; line < height; line++) {
             const source = (row + line) * this.width + column;
-            heights.set(this.heights.subarray(source, source + width), line * width);
+            heights.set(this.data.subarray(source, source + width), line * width);
             normals?.set(this.normals!.subarray(source * 3, (source + width) * 3), line * width * 3);
         }
         return new DemInfos(createHeightGrid(width, height, heights), normals);
     }
 
     private sample(index: number): IHeightSample {
-        return { column: index % this.width, row: Math.floor(index / this.width), height: this.heights[index]! };
+        return { column: index % this.width, row: Math.floor(index / this.width), height: this.data[index]! };
     }
 }
 
@@ -193,9 +155,9 @@ export class DemInfos implements IDemInfos {
  */
 export function computeGridNormals(grid: IHeightGrid, columnSpacing: number, rowSpacing = columnSpacing): Float32Array {
     if (!(columnSpacing > 0) || !(rowSpacing > 0)) throw new RangeError("Grid spacing must be positive.");
-    const { width, height, heights } = grid;
+    const { width, height, data } = grid;
     const normals = new Float32Array(width * height * 3);
-    const at = (column: number, row: number): number => heights[row * width + column]!;
+    const at = (column: number, row: number): number => data[row * width + column]!;
 
     const slope = (center: number, before: number, after: number, spacing: number): number => {
         const hasBefore = !Number.isNaN(before);
