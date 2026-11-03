@@ -1,16 +1,33 @@
 import type { IHeightGrid } from "./dem";
 
 /**
+ * Location of the samples of a height grid over the tile extent.
+ *
+ * - `area`: each sample covers one pixel, so sample `i` is centred at `(i + 0.5) / size`. This is how DEM tiles are
+ *   published; positions closer to the edge than half a pixel use the edge samples, so two neighbouring tiles
+ *   disagree on their shared edge.
+ * - `point`: sample `i` lies at `i / (size - 1)`, so the first and last samples lie on the tile edges. Stitched
+ *   grids use it: their last column and row come from the neighbouring tiles, which then share their edge samples.
+ */
+export type HeightGridRegistration = "area" | "point";
+
+/** Continuous sample coordinate of a normalized position, clamped to the grid. */
+export function sampleCoordinate(t: number, size: number, registration: HeightGridRegistration = "area"): number {
+    const coordinate = registration === "point" ? t * (size - 1) : t * size - 0.5;
+    return Math.min(Math.max(coordinate, 0), size - 1);
+}
+
+/**
  * Samples a height grid with bilinear interpolation.
  *
- * `u` runs west to east and `v` north to south over the tile extent, both in `[0, 1]`. Each sample covers one
- * pixel, so sample `i` is centred at `(i + 0.5) / width`; positions closer to the edge than half a pixel use the
- * edge samples. Missing neighbours are left out of the weighting; the result is `NaN` only when all four are missing.
+ * `u` runs west to east and `v` north to south over the tile extent, both in `[0, 1]`; see
+ * {@link HeightGridRegistration} for the location of the samples. Missing neighbours are left out of the
+ * weighting; the result is `NaN` only when all four are missing.
  */
-export function sampleHeightBilinear(grid: IHeightGrid, u: number, v: number): number {
+export function sampleHeightBilinear(grid: IHeightGrid, u: number, v: number, registration: HeightGridRegistration = "area"): number {
     const { width, height, heights } = grid;
-    const x = Math.min(Math.max(u * width - 0.5, 0), width - 1);
-    const y = Math.min(Math.max(v * height - 0.5, 0), height - 1);
+    const x = sampleCoordinate(u, width, registration);
+    const y = sampleCoordinate(v, height, registration);
     const column = Math.min(Math.floor(x), width - 2 < 0 ? 0 : width - 2);
     const row = Math.min(Math.floor(y), height - 2 < 0 ? 0 : height - 2);
     const nextColumn = Math.min(column + 1, width - 1);

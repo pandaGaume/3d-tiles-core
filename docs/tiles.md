@@ -77,6 +77,27 @@ Heights are in metres.
 - Normals are unit vectors in local east, north, up axes, computed with central differences: `n = normalize(-dh/de, -dh/dn, 1)`. Rows grow southward, so `dh/dn` is the negated row gradient. Edges and samples next to missing values use one-sided differences; a sample without valid neighbours gets `(0, 0, 1)`.
 - For Web Mercator tiles, the sample spacing is the ground resolution at the tile centre latitude multiplied by `tileSize / gridWidth`, identical along rows and columns because the projection is conformal.
 
+## Sampling and stitched grids
+
+A height grid is sampled in normalized tile coordinates, `u` west to east and `v` north to south, with one of two registrations:
+
+| Registration | Sample `i` of `size` lies at | Use                                                          |
+| ------------ | ---------------------------- | ------------------------------------------------------------ |
+| `area`       | `(i + 0.5) / size`           | a DEM tile as published: each sample covers one pixel        |
+| `point`      | `i / (size - 1)`             | a stitched grid: the first and last samples lie on the edges |
+
+- Bilinear sampling clamps the sample coordinate to `[0, size - 1]` and leaves missing samples out of the weighting; the result is `NaN` only when the four samples are missing.
+- In `area` registration the last pixels lie half a pixel inside the tile, so two neighbouring DEM tiles never share a sample and their edges disagree by one pixel of terrain.
+
+A stitched grid, as in SpaceXR, adds one column and one row to a `w x h` DEM tile, `(w + 1) x (h + 1)` samples in `point` registration:
+
+- the extra column is the first column of the east neighbour `E`, the extra row the first row of the south neighbour `S`, and the extra corner the first sample of the south-east neighbour `SE`, all at the same level of detail;
+- until a neighbour is available, its part repeats the last column, the last row or the last sample of the tile itself;
+- adding a tile also fills the extra column of its west neighbour `W`, the extra row of its north neighbour `N` and the extra corner of its north-west neighbour `NW`, so the result does not depend on the arrival order;
+- neighbouring stitched grids then hold identical samples on their shared edge. A grid of `w` cells sampled in `point` registration places each vertex exactly on a sample.
+
+The height range of an area covers every sample a bilinear sample inside it can interpolate: columns `floor(west * size - 0.5)` to `ceil(east * size - 0.5)` in `area` registration, `floor(west * (size - 1))` to `ceil(east * (size - 1))` in `point` registration, and likewise for rows.
+
 ## Worker decoding protocol
 
 Implementations that decode DEM tiles in workers exchange two messages:

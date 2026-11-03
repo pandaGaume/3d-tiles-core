@@ -1,4 +1,5 @@
 import { createHeightGrid, type IHeightGrid } from "./dem";
+import type { HeightGridRegistration } from "./sampling";
 
 /** Height interval in metres. Both bounds are `NaN` when no valid sample is covered. */
 export interface IHeightRange {
@@ -66,17 +67,20 @@ function lastSampleBefore(t: number, size: number): number {
 /**
  * Height range of every sample that can influence a bilinear sample taken inside an area.
  *
- * The area is given in normalized tile coordinates, `u` west to east and `v` north to south. Sample `i` is
- * centred at `(i + 0.5) / size`, so a position `t` interpolates samples `floor(t * size - 0.5)` and the next one;
- * the range therefore bounds every height {@link sampleHeightBilinear} can return in the area, which makes it a
- * safe bounding range for an overzoomed sub-area or a child tile.
+ * The area is given in normalized tile coordinates, `u` west to east and `v` north to south. With `area`
+ * registration, sample `i` is centred at `(i + 0.5) / size`, so a position `t` interpolates samples
+ * `floor(t * size - 0.5)` and the next one; with `point` registration, samples `floor(t * (size - 1))` and the next
+ * one. The range therefore bounds every height {@link sampleHeightBilinear} can return in the area with the same
+ * registration, which makes it a safe bounding range for an overzoomed sub-area or a child tile.
  */
-export function heightRangeInArea(grid: IHeightGrid, west: number, north: number, east: number, south: number): IHeightRange {
+export function heightRangeInArea(grid: IHeightGrid, west: number, north: number, east: number, south: number, registration: HeightGridRegistration = "area"): IHeightRange {
     if (!(west <= east) || !(north <= south)) throw new RangeError("The area must satisfy west <= east and north <= south.");
-    const firstColumn = firstSampleAfter(west, grid.width);
-    const lastColumn = lastSampleBefore(east, grid.width);
-    const firstRow = firstSampleAfter(north, grid.height);
-    const lastRow = lastSampleBefore(south, grid.height);
+    const first = (t: number, size: number) => (registration === "point" ? Math.min(Math.max(Math.floor(t * (size - 1)), 0), size - 1) : firstSampleAfter(t, size));
+    const last = (t: number, size: number) => (registration === "point" ? Math.min(Math.max(Math.ceil(t * (size - 1)), 0), size - 1) : lastSampleBefore(t, size));
+    const firstColumn = first(west, grid.width);
+    const lastColumn = last(east, grid.width);
+    const firstRow = first(north, grid.height);
+    const lastRow = last(south, grid.height);
     const range = emptyRange();
     for (let row = firstRow; row <= lastRow; row++) {
         for (let column = firstColumn; column <= lastColumn; column++) {
