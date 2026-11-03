@@ -32,6 +32,24 @@ A stitched raster, as in SpaceXR, adds one column and one row to a `w x h` tile,
 - neighbours must have the same size and number of channels;
 - neighbouring stitched rasters then hold identical samples on their shared edge. A grid of `w` cells sampled in `point` registration places each vertex exactly on a sample.
 
+## Generated levels
+
+A raster pyramid can generate the levels below the deepest level of its source, typically down to the deepest level of the tile system the rasters are draped on. Each generated tile interpolates the level above, generation by generation.
+
+- The tiles of one level form a single lattice: sample `i` of tile `x` lies at `x + i / w` in tile units, `w` samples per tile, and likewise for rows.
+- Sample `i` of the child at column `c` (0 west, 1 east) of a parent lies at parent sample `(c * w + i) / 2`, and likewise for rows. Its value interpolates the lattice of the parent level at that position, using the parent and its eight neighbours; a missing neighbour repeats the edge samples of the parent.
+- Children of neighbouring parents interpolate the same lattice, so generated tiles stitch like source tiles.
+- Missing samples are left out of the weighting.
+
+| Interpolation | Samples | Properties                                                                                    |
+| ------------- | ------- | --------------------------------------------------------------------------------------------- |
+| `nearest`     | 1       | sample `round(x), round(y)`                                                                     |
+| `linear`      | 3       | linear on the two triangles of each cell, split from its north-west to its south-east corner |
+| `bilinear`    | 4       | bilinear in each cell                                                                          |
+| `cubic`       | 4 x 4   | Catmull-Rom spline: smooth (C1), interpolating, may overshoot; bilinear next to missing samples |
+
+Catmull-Rom weights for `t = x - floor(x)` are `(-t^3 + 2t^2 - t) / 2`, `(3t^3 - 5t^2 + 2) / 2`, `(-3t^3 + 4t^2 + t) / 2` and `(t^3 - t^2) / 2`. Every interpolation passes through the samples, so generated levels keep the source heights, and reproduces constant values; all but `nearest` reproduce linear slopes. Approximating schemes such as a quadratic B-spline are excluded: applied generation after generation, they lower summits at each level, by 14 m from a 4808 m summit sampled every 30 m in one generation.
+
 ## Raster pyramids
 
 A raster pyramid is a [tile pyramid](tiles.md#tile-pyramids) of rasters that prefetches the `E`, `S` and `SE` neighbours of every tile and stitches each raster as it arrives.

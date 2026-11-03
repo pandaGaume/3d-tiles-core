@@ -42,6 +42,18 @@ describe("DemPyramid", () => {
         expect(heights?.sampler(0, 0)).toBeCloseTo(1000 * (3 / 8) + 500 * (1 / 8), 3);
     });
 
+    it("generates DEM levels below the source with the chosen interpolation", async () => {
+        const pyramid = new DemPyramid({ load: planeTile, maxLOD: 1, generation: { maxLOD: 3, interpolation: "cubic" } });
+        const heights = await pyramid.tileHeights({ lod: 3, x: 3, y: 1 });
+
+        expect(pyramid.demLevel(3)).toBe(3);
+        expect(pyramid.demLevel(5)).toBe(3);
+        expect(heights?.demAddress).toEqual({ lod: 3, x: 3, y: 1 });
+        // A plane stays a plane through cubic generations.
+        expect(heights?.sampler(0, 0)).toBeCloseTo(1000 * (3 / 8) + 500 * (1 / 8), 2);
+        expect(pyramid.heightAt(3 / 8 + 1 / 32, 1 / 8, 3)).toBeCloseTo(1000 * (3 / 8 + 1 / 32) + 500 / 8, 2);
+    });
+
     it("gives the same height and gradient from either side of a tile edge", async () => {
         const pyramid = new DemPyramid({ load: planeTile, maxLOD: 2, wrapX: true });
         expect(pyramid.heightAt(0.5, 0.25, 1)).toBeNaN();

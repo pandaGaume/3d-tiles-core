@@ -26,6 +26,7 @@ Rules shared by every implementation of the DEM layer (`@spacexr/dem` for Node.j
 
 A DEM pyramid is a raster pyramid of height grids, sampled as one continuous surface.
 
+- Below the deepest DEM level, levels can be generated down to the deepest level of the terrain tile system, as described in [Generated levels](raster.md#generated-levels): `cubic` interpolation smooths terrain the DEM cannot resolve, instead of the facets of an overzoomed bilinear sub-area.
 - The heights of a tile come with the range of every sample it can interpolate and with the ranges of its four quadrants, which can bound its children before their own DEM is loaded.
 - A point touched by tiles of several levels of detail, on the edge between a tile and a coarser or finer neighbour, takes its height from the levels chosen by a policy: `coarsest` keeps the coarse tiles intact, `finest` keeps the finest detail, `average` takes the mean over every level. Missing levels are left out.
 - The gradient at a point differentiates the heights of each level one grid cell apart, `1 / (cells * 2^lod)` in pyramid units for grids of `cells` cells per tile, so that shading follows the mesh rather than DEM detail its triangles cannot show; a missing neighbour falls back to a one-sided difference. The gradient over several levels is the mean of their gradients.

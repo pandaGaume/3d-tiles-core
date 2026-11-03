@@ -55,6 +55,16 @@ describe("RasterPyramid", () => {
         expect(pyramid.sampleAt(-0.25, 0, 1)).toBe(pyramid.sampleAt(0.75, 0, 1));
     });
 
+    it("reports the stitched grids each arrival changes", async () => {
+        const changes: string[][] = [];
+        const pyramid = new RasterPyramid({ load, maxLOD: 1, onStitched: (changed) => changes.push(changed.map(({ x, y }) => `${x}/${y}`)) });
+        await pyramid.load({ lod: 1, x: 0, y: 0 });
+
+        expect(changes).toContainEqual(["0/0"]);
+        // The east neighbour completes the extra column of the tile.
+        expect(changes.some((changed) => changed[0] === "1/0" && changed.includes("0/0"))).toBe(true);
+    });
+
     it("returns undefined where the pyramid has no raster", async () => {
         const pyramid = new RasterPyramid({ load: () => Promise.resolve(undefined), maxLOD: 1 });
         expect(await pyramid.load({ lod: 0, x: 0, y: 0 })).toBeUndefined();
