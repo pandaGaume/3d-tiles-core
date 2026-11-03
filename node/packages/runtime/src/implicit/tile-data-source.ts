@@ -1,6 +1,12 @@
 import type { IBoundingVolume, IContent, IMetadataEntity, ITileset } from "@spacexr/3d-tiles-core";
 
-import type { IImplicitCoordinates, IImplicitTileResolveContext, IImplicitTileResolver, IImplicitTileOverride } from "./types";
+import type {
+    IImplicitCoordinates,
+    IImplicitTileAddressContext,
+    IImplicitTileResolveContext,
+    IImplicitTileResolver,
+    IImplicitTileOverride,
+} from "./types";
 import type { ITileMetrics } from "./metrics";
 
 export interface ITileAddress {
@@ -93,6 +99,11 @@ export class ImplicitTilesetDecorator implements IImplicitTileResolver {
                 },
             },
         };
+    }
+
+    /** Address of the tile in the source pyramid, shared by every decorator of the same pyramid. */
+    public addressOf(context: IImplicitTileAddressContext): ITileAddress {
+        return this.dataSource.addressOf(context.coordinates);
     }
 
     public resolve(context: IImplicitTileResolveContext): IImplicitTileOverride {

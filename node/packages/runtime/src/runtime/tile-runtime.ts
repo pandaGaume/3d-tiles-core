@@ -68,6 +68,7 @@ import type {
 import type { IRuntimeInstrumentationOptions, IRuntimeStateStatistics } from "./instrumentation";
 import { RuntimeInstrumentation } from "./instrumentation";
 import { PriorityScheduler } from "./priority-scheduler";
+import { quadtreeBalanceRefinements, quadtreeTileKey, type IQuadtreeTileLocation } from "./quadtree-balance";
 
 export interface ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHandle> {
     id: string;
@@ -88,11 +89,28 @@ export interface ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHa
      * true.
      */
     stableReplacementCut?: boolean;
+    /**
+     * Keeps the displayed tiles of implicit QUADTREE tilesets within one level
+     * of detail of their edge neighbours (2:1 balance). A tile displayed two or
+     * more levels coarser than a neighbour is refined on the next frame, even
+     * when its screen-space error does not require it. Terrain grids can then
+     * connect every edge with junctions of one level.
+     *
+     * Neighbours are found across implicit tilesets when the implicit resolver
+     * provides `addressOf`; `wrapX` then also connects the antimeridian of a
+     * global pyramid. Defaults to false.
+     */
+    quadtreeBalance?: boolean | IQuadtreeBalanceOptions;
     maxConcurrentLoads?: number;
     maxLoadAttempts?: number;
     cache?: IRuntimeCacheOptions | false;
     instrumentation?: boolean | IRuntimeInstrumentationOptions;
     hooks?: readonly IRuntimeHooks<TCamera, TSpatial, TContentHandle, TGlyphHandle>[];
+}
+
+export interface IQuadtreeBalanceOptions {
+    /** Wraps columns around the antimeridian for addresses from `IImplicitTileResolver.addressOf`. Defaults to false. */
+    wrapX?: boolean;
 }
 
 interface IContentCacheEntry<TSpatial, TContentHandle, TGlyphHandle> {
@@ -118,6 +136,9 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     private readonly maxScreenSpaceErrorForDepth: ((depth: number, defaultValue: number) => number) | undefined;
     private readonly refinementHysteresisRatio: number;
     private readonly stableReplacementCut: boolean;
+    private readonly quadtreeBalance: Required<IQuadtreeBalanceOptions> | undefined;
+    /** Keys of the tiles that must refine to keep the quadtree balanced, from the previous frame. */
+    private balanceRefinements = new Set<string>();
     private readonly maxLoadAttempts: number;
     private readonly cacheOptions: IResolvedRuntimeCacheOptions;
     private readonly cacheCounters: IRuntimeCacheCounters = {
@@ -171,6 +192,9 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             throw new RangeError("refinementHysteresisRatio must be in the interval [0, 1).");
         }
         this.stableReplacementCut = options.stableReplacementCut ?? true;
+        this.quadtreeBalance = options.quadtreeBalance
+            ? { wrapX: typeof options.quadtreeBalance === "object" && options.quadtreeBalance.wrapX === true }
+            : undefined;
         this.maxLoadAttempts = Math.max(1, Math.floor(options.maxLoadAttempts ?? 3));
         this.cacheOptions = resolveRuntimeCacheOptions(options.cache);
         this.hooks = options.hooks ?? [];
@@ -331,6 +355,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         this.activeThisFrame.clear();
         for (const node of this.nodes.values()) node.visible = false;
         this.visit(root, camera, desired, requested);
+        this.updateQuadtreeBalance(desired);
         await this.deactivatePipelineTilesOutsideWorkingSet();
 
         const entering = [...desired.values()].filter((node) => !node.selected).sort((left, right) => left.depth - right.depth);
@@ -399,7 +424,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         );
         const wasRefining = this.refiningNodes.has(node.id);
         const effectiveThreshold = wasRefining ? threshold * (1 - this.refinementHysteresisRatio) : threshold;
-        const refinementRequested = node.screenSpaceError > effectiveThreshold || !hasPotentialPresentation;
+        const refinementRequested =
+            node.screenSpaceError > effectiveThreshold || !hasPotentialPresentation || this.isBalanceRefinementRequired(node);
         if (refinementRequested) this.materializeImplicitChildren(node);
         const wantsRefinement = refinementRequested && node.children.length > 0;
         this.setRefinementState(node, wantsRefinement);
@@ -468,6 +494,48 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         }
         if (node.children.length === 0) return true;
         return node.children.every((child) => this.collectReplacementFront(child, camera, requested));
+    }
+
+    /** Location of an implicit quadtree tile for balancing, or `undefined` when balancing does not apply. */
+    private quadtreeLocation(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): IQuadtreeTileLocation | undefined {
+        const implicit = node.implicit;
+        if (!this.quadtreeBalance || !implicit || implicit.context.implicitTiling.subdivisionScheme !== "QUADTREE") return undefined;
+        const { context, coordinates } = implicit;
+        const address = this.adapter.implicitTiles?.addressOf?.({
+            documentUri: node.document.uri,
+            rootTile: context.rootTile,
+            implicitTiling: context.implicitTiling,
+            coordinates,
+        });
+        if (address) return { namespace: "", address, wrapX: this.quadtreeBalance.wrapX };
+        // Without a shared pyramid, each implicit tileset is balanced on its own coordinates.
+        return { namespace: `${context.id}:`, address: { lod: coordinates.level, x: coordinates.x, y: coordinates.y }, wrapX: false };
+    }
+
+    private isBalanceRefinementRequired(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): boolean {
+        if (this.balanceRefinements.size === 0) return false;
+        const location = this.quadtreeLocation(node);
+        return location !== undefined && this.balanceRefinements.has(quadtreeTileKey(location.namespace, location.address));
+    }
+
+    /**
+     * Derives the refinements that balance the selection of this frame. They
+     * apply from the next frame, which is requested when they change; a
+     * refinement can unbalance further neighbours, which the following frames
+     * resolve one level at a time.
+     */
+    private updateQuadtreeBalance(desired: ReadonlyMap<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>): void {
+        if (!this.quadtreeBalance) return;
+        const locations: IQuadtreeTileLocation[] = [];
+        for (const node of desired.values()) {
+            const location = this.quadtreeLocation(node);
+            if (location) locations.push(location);
+        }
+        const next = quadtreeBalanceRefinements(locations);
+        const changed = next.size !== this.balanceRefinements.size || [...next].some((key) => !this.balanceRefinements.has(key));
+        if (!changed) return;
+        this.balanceRefinements = next;
+        this.markDirty();
     }
 
     private isNodePresentationReady(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): boolean {

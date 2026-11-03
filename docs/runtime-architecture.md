@@ -152,6 +152,16 @@ This spatial override matters because standard 3D Tiles `region` subdivision is 
 
 The content port receives `implicitCoordinates`, the synthesized tile bounding volume and the derived spatial state. A Babylon terrain adapter can therefore share normalized grid topology while projecting unique per-tile geometry from the geographic region and the selected ellipsoid. Curvature and east-west pinching then follow latitude exactly. A later GPU implementation can bind the region, ellipsoid and DEM as per-instance shader inputs, while keeping the same runtime ports and pooling resources across presentation, hiding and release. The generic runtime does not create Babylon meshes or shaders.
 
+### Quadtree balance
+
+Screen-space-error refinement decides each tile on its own, so two neighbouring branches can be displayed several levels apart, for example close to a grazing camera. Terrain grids can only connect edges one level apart. With `quadtreeBalance`, the runtime keeps the displayed tiles of implicit QUADTREE tilesets within one level of their edge neighbours (2:1 balance):
+
+1. after the traversal of a frame, for each displayed tile of level `L` and each edge neighbour at level `L`, every ancestor of that neighbour at level `L - 2` or coarser is marked for refinement;
+2. the next traversal refines the marked tiles even when their screen-space error does not require it, with the usual hole-free REPLACE transition;
+3. a frame is requested whenever the marks change, so a refinement that unbalances further neighbours is resolved on the following frames, one level at a time. The marks disappear when the finer tile coarsens.
+
+Diagonal neighbours do not constrain a tile, because tile corners exist at every level. Neighbours follow the `TileNeighbor` layout of `@spacexr/tiles`. When the implicit resolver implements `addressOf`, as `ImplicitTilesetDecorator` does, tiles are located in the pyramid shared by several implicit tilesets and balanced across their roots; `wrapX` also connects the antimeridian of a global pyramid. Otherwise each implicit tileset is balanced on its own coordinates. Explicit tilesets have no neighbour definition and are not balanced.
+
 ## Hooks and specialization
 
 `IRuntimeHooks` exposes before and after hooks for tileset loading, frame traversal, content loading, attachment, detachment, metadata resolution, glyph publication and selection changes. Hook failures are reported as runtime errors without corrupting the traversal.

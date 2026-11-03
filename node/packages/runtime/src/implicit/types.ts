@@ -1,6 +1,7 @@
 import type { IBoundingVolume, IContent, IImplicitTiling, IMetadataEntity, IMetadataSchema, ISubtree, ITile } from "@spacexr/3d-tiles-core";
 
 import type { TileReadinessState } from "../pipeline/states";
+import type { ITileAddress } from "./tile-data-source";
 
 export interface IImplicitCoordinates {
     level: number;
@@ -45,12 +46,26 @@ export interface IImplicitTileOverride {
     metadata?: IMetadataEntity;
 }
 
+export interface IImplicitTileAddressContext {
+    documentUri: string;
+    rootTile: ITile;
+    implicitTiling: IImplicitTiling;
+    coordinates: IImplicitCoordinates;
+}
+
 /**
  * Optional runtime override for sources whose physical pyramid differs from
  * the regular 3D Tiles subdivision, for example XYZ Web Mercator services.
  */
 export interface IImplicitTileResolver {
     resolve(context: IImplicitTileResolveContext): IImplicitTileOverride | undefined;
+    /**
+     * Address of an implicit tile in a pyramid shared by several implicit
+     * tilesets, in the XYZ convention. Quadtree balancing uses it to find
+     * neighbours across implicit roots; without it, neighbours are searched
+     * within each implicit tileset only.
+     */
+    addressOf?(context: IImplicitTileAddressContext): ITileAddress | undefined;
 }
 
 export interface IImplicitMetadataDecodeRequest {
