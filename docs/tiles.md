@@ -67,3 +67,5 @@ A tile pyramid loads the content of its tiles on demand, whatever that content i
 - A user can retain the tile serving a tile, for example while a renderer displays data sampled from it: retained tiles never leave the cache, which may then exceed its capacity, until they are released as many times.
 
 Rasters and DEMs build on this pyramid; see [Rasters](raster.md) and [Digital elevation models](dem.md).
+
+Web Mercator leaves the poles out. [Celestial tiling](celestial-tiling.md) specifies a cube tiling covering whole bodies, with an address `(face, lod, x, y)` extending this one.
