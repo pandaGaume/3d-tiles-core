@@ -71,6 +71,24 @@ export class DemPyramid {
         return this.rasters.size;
     }
 
+    /**
+     * Keeps the DEM tile serving a tile in memory until it is released, for example while a terrain tile is displayed:
+     * `heightAt` and the surface helpers only read DEM tiles in memory.
+     */
+    public retain(address: ITileAddress): void {
+        this.rasters.retain(address);
+    }
+
+    /** Releases a DEM tile retained with {@link retain}. */
+    public release(address: ITileAddress): void {
+        this.rasters.release(address);
+    }
+
+    /** Whether the DEM tile serving a tile is in memory, so that `heightAt` reads it. */
+    public isResident(address: ITileAddress): boolean {
+        return this.rasters.stitchedGrid(this.rasters.areaOf(address).ancestor) !== undefined;
+    }
+
     /** DEM level sampled for a tile level: the level itself down to the deepest generated level, then that level. */
     public demLevel(lod: number): number {
         return this.rasters.sourceLevel(lod);

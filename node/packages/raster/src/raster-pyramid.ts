@@ -90,9 +90,24 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
         return this.tiles.size;
     }
 
+    /** The raster tile serving a tile and the part of it the tile covers. */
+    public areaOf(address: ITileAddress): ITileAreaInAncestor {
+        return this.tiles.areaOf(address);
+    }
+
     /** Raster level sampled for a tile level: tiles beyond `maxLOD` share the deepest rasters. */
     public sourceLevel(lod: number): number {
         return this.tiles.sourceLevel(lod);
+    }
+
+    /** Keeps the raster serving a tile, and its stitched grid, in memory until it is released; see `TilePyramid.retain`. */
+    public retain(address: ITileAddress): void {
+        this.tiles.retain(address);
+    }
+
+    /** Releases a raster retained with {@link retain}. */
+    public release(address: ITileAddress): void {
+        this.tiles.release(address);
     }
 
     /** Stitched grid of a loaded raster tile, without loading it. */

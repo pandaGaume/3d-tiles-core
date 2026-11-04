@@ -67,14 +67,16 @@ function key(address: ITileAddress): string {
  * Tiles of a pyramid loaded on demand, whatever their content: rasters, meshes, vector data.
  *
  * Each tile loads once and is shared by every request, including the requests of deeper tiles beyond `maxLOD`, which
- * use a sub-area of their ancestor. The least recently used tiles leave the cache. Neighbours listed in `prefetch`
- * load with every tile.
+ * use a sub-area of their ancestor. The least recently used tiles leave the cache, except the tiles retained by their
+ * users, which may exceed its capacity. Neighbours listed in `prefetch` load with every tile.
  */
 export class TilePyramid<T> {
     public readonly maxLOD: number;
     private readonly options: ITilePyramidOptions<T>;
     private readonly cacheEntries: number;
     private readonly entries = new Map<string, ITilePyramidEntry<T>>();
+    /** Retain counts of the pyramid tiles that must stay in the cache. */
+    private readonly retained = new Map<string, number>();
 
     public constructor(options: ITilePyramidOptions<T>) {
         if (!Number.isInteger(options.maxLOD) || options.maxLOD < 0) throw new RangeError("maxLOD must be a non-negative integer.");
@@ -117,6 +119,24 @@ export class TilePyramid<T> {
         return content === undefined ? undefined : { ...area, address: { ...address }, content };
     }
 
+    /**
+     * Keeps the pyramid tile serving a tile in the cache until it is released as many times, for example while a
+     * renderer displays data sampled from it. A retained tile still has to be loaded.
+     */
+    public retain(address: ITileAddress): void {
+        const tileKey = key(this.areaOf(address).ancestor);
+        this.retained.set(tileKey, (this.retained.get(tileKey) ?? 0) + 1);
+    }
+
+    /** Releases a tile retained with {@link retain}; the cache then evicts it like any other once it is full. */
+    public release(address: ITileAddress): void {
+        const tileKey = key(this.areaOf(address).ancestor);
+        const count = (this.retained.get(tileKey) ?? 0) - 1;
+        if (count > 0) this.retained.set(tileKey, count);
+        else this.retained.delete(tileKey);
+        this.evictOverflow();
+    }
+
     /** Removes a tile from the cache. */
     public delete(address: ITileAddress): boolean {
         const deleted = this.entries.delete(key(address));
@@ -146,10 +166,16 @@ export class TilePyramid<T> {
             if (this.entries.get(tileKey) === entry) this.entries.delete(tileKey);
         });
         this.entries.set(tileKey, entry);
-        if (this.entries.size > this.cacheEntries) {
-            const oldest = this.entries.values().next().value;
-            if (oldest) this.delete(oldest.address);
-        }
+        this.evictOverflow();
         return loading;
+    }
+
+    /** Evicts the least recently used tiles that are not retained while the cache exceeds its capacity. */
+    private evictOverflow(): void {
+        if (this.entries.size <= this.cacheEntries) return;
+        for (const [tileKey, entry] of this.entries) {
+            if (this.entries.size <= this.cacheEntries) return;
+            if (!this.retained.has(tileKey)) this.delete(entry.address);
+        }
     }
 }

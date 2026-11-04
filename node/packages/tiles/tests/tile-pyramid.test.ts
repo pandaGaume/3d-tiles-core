@@ -98,3 +98,30 @@ describe("TilePyramid", () => {
         expect(() => new TilePyramid({ load: () => Promise.resolve(undefined), maxLOD: -1 })).toThrow(RangeError);
     });
 });
+
+describe("TilePyramid retention", () => {
+    it("never evicts retained tiles, and evicts them like others once released", async () => {
+        const evicted: string[] = [];
+        const pyramid = new TilePyramid<string>({
+            load: (address) => Promise.resolve(`${address.lod}/${address.x}/${address.y}`),
+            maxLOD: 4,
+            cacheEntries: 2,
+            onEvict: (address) => evicted.push(`${address.lod}/${address.x}/${address.y}`),
+        });
+        // Deeper tiles retain the pyramid tile serving them.
+        pyramid.retain({ lod: 6, x: 0, y: 0 });
+        await pyramid.load({ lod: 4, x: 0, y: 0 });
+        await pyramid.load({ lod: 4, x: 1, y: 0 });
+        await pyramid.load({ lod: 4, x: 2, y: 0 });
+        await pyramid.load({ lod: 4, x: 3, y: 0 });
+
+        expect(pyramid.get({ lod: 4, x: 0, y: 0 })).toBe("4/0/0");
+        expect(evicted).toEqual(["4/1/0", "4/2/0"]);
+
+        // Released, the least recently used tile is evicted first once the cache overflows.
+        pyramid.release({ lod: 6, x: 0, y: 0 });
+        expect(pyramid.size).toBe(2);
+        await pyramid.load({ lod: 4, x: 4, y: 0 });
+        expect(evicted).toEqual(["4/1/0", "4/2/0", "4/0/0"]);
+    });
+});

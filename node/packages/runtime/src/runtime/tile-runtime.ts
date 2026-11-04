@@ -89,12 +89,30 @@ export interface ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHa
      */
     refinementHysteresisRatio?: number;
     /**
+     * Frames a refined tile stays refined after nothing requires its refinement
+     * any more, neither its screen-space error nor the quadtree balance. A
+     * refinement then survives a neighbour leaving the view for a moment, or a
+     * screen-space error dipping under the threshold while the camera turns,
+     * instead of coarsening and refining again a few frames later. Defaults to
+     * 0, which coarsens at once.
+     */
+    coarseningDelayFrames?: number;
+    /**
      * Keeps already selected descendants while their coarser replacement is
      * loading, or as a last-resort fallback when no ready renderable ancestor
      * exists. Correct visual coverage never depends on the cache. Defaults to
      * true.
      */
     stableReplacementCut?: boolean;
+    /**
+     * Loads the children of a refined tile that lie outside the view, with a
+     * lower priority than visible tiles. A refined tile is replaced by its
+     * children only once every visible child is ready; without preloading, a
+     * child entering the view as the camera turns is not ready, and the whole
+     * refined area falls back to the coarser tile until it loads. Defaults to
+     * false.
+     */
+    preloadSiblings?: boolean;
     /**
      * Keeps the displayed tiles of implicit QUADTREE tilesets within one level
      * of detail of their edge neighbours (2:1 balance). A tile that would be
@@ -119,6 +137,9 @@ export interface ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHa
 
 /** Bounds the traversal passes of the quadtree balance; one pass per level is always enough. */
 const MAX_BALANCE_PASSES = 32;
+
+/** Share of its screen-space error used as the load priority of a sibling preloaded outside the view. */
+const PRELOAD_PRIORITY_SCALE = 0.25;
 
 /** Load priority of the tiles the quadtree balance waits for, above any screen-space error. */
 const BALANCE_LOAD_PRIORITY = Number.MAX_SAFE_INTEGER;
@@ -151,6 +172,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     private readonly maxScreenSpaceErrorForDepth: ((depth: number, defaultValue: number) => number) | undefined;
     private readonly refinementHysteresisRatio: number;
     private readonly stableReplacementCut: boolean;
+    private readonly preloadSiblings: boolean;
+    private readonly coarseningDelayFrames: number;
+    /** Frame since which each refined tile no longer requires its refinement. */
+    private readonly coarseningSince = new Map<string, number>();
     private readonly quadtreeBalance: Required<IQuadtreeBalanceOptions> | undefined;
     /** Keys of the tiles that must refine to keep the quadtree balanced in the current frame. */
     private balanceRefinements = new Set<string>();
@@ -210,6 +235,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             throw new RangeError("refinementHysteresisRatio must be in the interval [0, 1).");
         }
         this.stableReplacementCut = options.stableReplacementCut ?? true;
+        this.preloadSiblings = options.preloadSiblings ?? false;
+        this.coarseningDelayFrames = Math.max(0, Math.trunc(options.coarseningDelayFrames ?? 0));
         this.quadtreeBalance = options.quadtreeBalance
             ? { wrapX: typeof options.quadtreeBalance === "object" && options.quadtreeBalance.wrapX === true }
             : undefined;
@@ -340,6 +367,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         for (const node of [...this.nodes.values()].sort((left, right) => right.depth - left.depth)) await this.disposeNodeContent(node);
         this.nodes.clear();
         this.refiningNodes.clear();
+        this.coarseningSince.clear();
         this.replacementFrontNodes.clear();
         this.selectedAtFrameStart = [];
         this.activeThisFrame.clear();
@@ -461,7 +489,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         const effectiveThreshold = wasRefining ? threshold * (1 - this.refinementHysteresisRatio) : threshold;
         const balanceRequested = this.isBalanceRefinementRequired(node);
         const held = hasPotentialPresentation && this.balanceHolds.has(node.id);
-        const refinementRequested = !held && (node.screenSpaceError > effectiveThreshold || !hasPotentialPresentation || balanceRequested);
+        const required = node.screenSpaceError > effectiveThreshold || !hasPotentialPresentation || balanceRequested;
+        const refinementRequested = !held && (required || this.isCoarseningDelayed(node, wasRefining, required));
         if (refinementRequested) this.materializeImplicitChildren(node);
         const wantsRefinement = refinementRequested && node.children.length > 0;
         this.setRefinementState(node, wantsRefinement);
@@ -512,7 +541,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         priorityFloor = 0,
     ): boolean {
         node.visible = this.adapter.spatial.isVisible(node.spatial, camera);
-        if (!node.visible) return true;
+        if (!node.visible) {
+            if (this.preloadSiblings) this.preloadSibling(node, camera, requested);
+            return true;
+        }
         node.lastTouchedFrame = this.frame;
         if (node.implicit) node.implicit.subtree.lastTouchedFrame = this.frame;
         node.screenSpaceError = this.adapter.spatial.screenSpaceError({
@@ -538,6 +570,53 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         }
         if (node.children.length === 0) return true;
         return node.children.every((child) => this.collectReplacementFront(child, camera, requested, priorityFloor));
+    }
+
+    /**
+     * Loads a child outside the view in the background, so that it is ready when the camera turns towards it. It
+     * never blocks the replacement of its parent, and its descendants are not loaded.
+     */
+    private preloadSibling(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        camera: TCamera,
+        requested: IRuntimeContent<TContentHandle>[],
+    ): void {
+        node.lastTouchedFrame = this.frame;
+        if (node.implicit) node.implicit.subtree.lastTouchedFrame = this.frame;
+        const screenSpaceError = this.adapter.spatial.screenSpaceError({
+            camera,
+            spatial: node.spatial,
+            tile: node.source,
+            depth: node.depth,
+        });
+        const priority = screenSpaceError * PRELOAD_PRIORITY_SCALE;
+        if (node.implicit && node.implicit.subtree.status !== TileReadinessState.Ready) {
+            this.requestImplicitSubtree(node, priority);
+            return;
+        }
+        const potential = node.contents.filter(
+            (content) => content.kind === TileContentKind.Unknown || content.kind === TileContentKind.Renderable,
+        );
+        if (potential.length === 0) return;
+        for (const content of potential) content.lastTouchedFrame = this.frame;
+        this.requestNodeContents(node, priority, requested);
+    }
+
+    /** Whether a refined tile that no longer requires its refinement still waits before coarsening. */
+    private isCoarseningDelayed(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        wasRefining: boolean,
+        required: boolean,
+    ): boolean {
+        if (required || !wasRefining || this.coarseningDelayFrames === 0) {
+            this.coarseningSince.delete(node.id);
+            return false;
+        }
+        const since = this.coarseningSince.get(node.id) ?? this.frame;
+        this.coarseningSince.set(node.id, since);
+        if (this.frame - since < this.coarseningDelayFrames) return true;
+        this.coarseningSince.delete(node.id);
+        return false;
     }
 
     /** Location of an implicit quadtree tile for balancing, or `undefined` when balancing does not apply. */
@@ -605,16 +684,29 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
      * or else the one at the neighbour's level, whichever is ready first. The
      * refinement resumes once the neighbour's children load.
      *
+     * Only new refinements are held. A refinement already displayed at the
+     * start of the frame is kept, because coarsening it would flicker: the
+     * neighbour typically comes into view while the camera turns, and its
+     * children load first since the balance requires them. The edge stays
+     * reported as unbalanced meanwhile.
+     *
      * @returns Whether a refinement was held, which requires another pass.
      */
     private holdUnbalancedRefinements(desired: ReadonlyMap<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>): boolean {
         if (!this.quadtreeBalance) return false;
         let held = false;
+        // Ancestors of the tiles displayed at the start of the frame: their refinement is already shown.
+        const refinedAtFrameStart = new Set<string>();
+        for (const node of this.selectedAtFrameStart) {
+            for (let ancestor = node.parent; ancestor && !refinedAtFrameStart.has(ancestor.id); ancestor = ancestor.parent)
+                refinedAtFrameStart.add(ancestor.id);
+        }
         for (const { fine, coarseLod } of this.findImbalances(desired)) {
             for (let ancestor = fine.parent; ancestor; ancestor = ancestor.parent) {
                 const lod = this.quadtreeLocation(ancestor)?.address.lod;
                 if (lod === undefined || lod < coarseLod) break;
                 if (lod > coarseLod + 1 || !this.isNodePresentationReady(ancestor)) continue;
+                if (refinedAtFrameStart.has(ancestor.id)) break;
                 if (!this.balanceHolds.has(ancestor.id)) {
                     this.balanceHolds.add(ancestor.id);
                     held = true;
@@ -2002,6 +2094,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         for (const node of [...descendants].sort((left, right) => right.depth - left.depth)) {
             await this.disposeNodeContent(node);
             this.refiningNodes.delete(node.id);
+            this.coarseningSince.delete(node.id);
             this.replacementFrontNodes.delete(node.id);
             this.nodes.delete(node.id);
         }

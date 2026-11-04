@@ -36,6 +36,7 @@ The pages available to the renderer form a residency index. The cover of a tile 
 - The terrain tile is divided into `2^k x 2^k` cells, the tiles of level `g + k` inside it, row-major from the north-west cell. Each cell uses its cover among the resident pages of level `g + k` or coarser: its own page, or the page of a coarser tile. A cell without any cover keeps the base colour of the terrain.
 - Cell `(i, j)` of a fragment at tile coordinates `(u, v)` is `(floor(u * 2^k), floor(v * 2^k))`, clamped to `[0, 2^k - 1]`; its cell coordinates are `(u * 2^k - i, v * 2^k - j)`. The page coordinates are `(west + s * size, north + t * size)`.
 - Each terrain tile owns a table of `2^maxDepth x 2^maxDepth` entries, of which the first `2^k x 2^k` hold, per cell, the page and the area `west, north, size` of the cell in it.
+- A drape depth increases as soon as the cut refines, and decreases only after the cut has stayed coarser for a hold time, 500 ms by default: the cut passes through transient states while imagery tiles are replaced, and coarsens for a moment while the camera turns. The finer pages stay resident meanwhile.
 - The binding of a terrain tile changes when the cut changes, or a page overlapping it at most `maxDepth` levels finer becomes resident or leaves.
 
 ## GPU instancing

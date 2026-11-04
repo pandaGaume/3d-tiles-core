@@ -64,5 +64,6 @@ A tile pyramid loads the content of its tiles on demand, whatever that content i
 - A tile deeper than `maxLOD` is served by its ancestor at `maxLOD` (overzoom). It covers the area `west = (x - ax * 2^d) / 2^d`, `north = (y - ay * 2^d) / 2^d`, `size = 1 / 2^d` of the ancestor `(maxLOD, ax, ay)`, `d` levels above, in normalized ancestor coordinates.
 - Neighbours listed for prefetch load with every tile, at the level of the tile serving it. A missing or failing neighbour does not fail the request; a failing tile leaves the cache so that it can be retried.
 - The least recently used tiles leave the cache once it holds more than its capacity, 256 tiles by default. A tile evicted while it loads is dropped when its load completes.
+- A user can retain the tile serving a tile, for example while a renderer displays data sampled from it: retained tiles never leave the cache, which may then exceed its capacity, until they are released as many times.
 
 Rasters and DEMs build on this pyramid; see [Rasters](raster.md) and [Digital elevation models](dem.md).

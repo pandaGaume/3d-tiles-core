@@ -40,6 +40,8 @@ describe("quadtreeBalanceRefinements", () => {
 interface ICamera {
     /** Longitude and latitude, in radians, where the screen-space error is high. */
     focus: readonly [number, number];
+    /** Hides the tiles east of the prime meridian, as if they were outside the view. */
+    hideEast?: boolean;
 }
 
 interface ISpatial {
@@ -52,8 +54,8 @@ class FocusMetric implements ISpatialMetric<ICamera, ISpatial> {
         return { region: context.tile.boundingVolume.region ?? [] };
     }
 
-    public isVisible(): boolean {
-        return true;
+    public isVisible(spatial: ISpatial, camera: ICamera): boolean {
+        return !camera.hideEast || spatial.region[0]! < 0;
     }
 
     public screenSpaceError({ camera, spatial }: { camera: ICamera; spatial: ISpatial }): number {
@@ -81,7 +83,12 @@ function largestEdgeJump(tiles: ReadonlyArray<{ lod: number; x: number; y: numbe
 }
 
 /** Runtime focusing just west of the prime meridian, so that the deepest tiles touch the eastern half of the map. */
-function createScenario(quadtreeBalance: boolean, delayed?: (address: { lod: number; x: number; y: number }) => Promise<void> | undefined) {
+function createScenario(
+    quadtreeBalance: boolean,
+    delayed?: (address: { lod: number; x: number; y: number }) => Promise<void> | undefined,
+    preloadSiblings = false,
+    coarseningDelayFrames = 0,
+) {
     const source = createWebMapImplicitSource({ urlTemplates: "grid://{z}/{x}/{y}", maximumZoom: 3, subtreeLevels: 4 });
     const adapter: IRuntimeAdapter<ICamera, ISpatial, string, never> = {
         tilesets: { load: async () => ({ tileset: source.tileset }) },
@@ -103,6 +110,8 @@ function createScenario(quadtreeBalance: boolean, delayed?: (address: { lod: num
         adapter,
         maxScreenSpaceError: 1,
         quadtreeBalance,
+        preloadSiblings,
+        coarseningDelayFrames,
         // More load slots than delayed tiles, so that the delayed loads do not block the others.
         maxConcurrentLoads: 8,
     });
@@ -156,6 +165,85 @@ describe("TileRuntime quadtree balance", () => {
         expect(largestEdgeJump(ready)).toBe(1);
         expect(Math.max(...ready.map((tile) => tile.lod))).toBe(3);
         await runtime.dispose();
+    });
+});
+
+describe("TileRuntime quadtree balance while turning", () => {
+    it("keeps a displayed refinement when a neighbour it cannot follow comes into view", async () => {
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        const { runtime, camera, selected } = createScenario(
+            true,
+            (address) => (address.lod === 2 && address.x >= 2 ? gate : undefined),
+            true,
+        );
+        const settle = async (frames: number) => {
+            for (let frame = 0; frame < frames; frame++) {
+                await runtime.update(camera);
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+        };
+
+        // The eastern half is out of view: the focus refines to the deepest level without any neighbour to balance.
+        camera.hideEast = true;
+        await settle(20);
+        expect(Math.max(...selected().map((tile) => tile.lod))).toBe(3);
+
+        // The camera turns east: coarse eastern tiles come into view while the children they need still load.
+        camera.hideEast = false;
+        const levels: number[] = [];
+        let unbalanced = 0;
+        for (let frame = 0; frame < 20; frame++) {
+            const result = await runtime.update(camera);
+            levels.push(Math.max(...selected().map((tile) => tile.lod)));
+            unbalanced = Math.max(unbalanced, result.unbalanced.length);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        // The displayed refinement never coarsens; the waiting edges are reported instead.
+        expect(levels.every((level) => level === 3)).toBe(true);
+        expect(unbalanced).toBeGreaterThan(0);
+
+        release();
+        await runtime.update(camera);
+        await runtime.whenIdle();
+        await runtime.update(camera);
+        expect(largestEdgeJump(selected())).toBe(1);
+        expect(Math.max(...selected().map((tile) => tile.lod))).toBe(3);
+        await runtime.dispose();
+    });
+});
+
+describe("TileRuntime coarsening delay", () => {
+    async function deepestLevelsAfterMovingAway(coarseningDelayFrames: number): Promise<number[]> {
+        const { runtime, camera, selected } = createScenario(false, undefined, false, coarseningDelayFrames);
+        await runtime.update(camera);
+        await runtime.whenIdle();
+        await runtime.update(camera);
+        expect(Math.max(...selected().map((tile) => tile.lod))).toBe(3);
+
+        // The focus moves to the other side of the map: nothing requires the refinement any more.
+        const away: ICamera = { focus: [2.5, -0.8] };
+        const levels: number[] = [];
+        for (let frame = 0; frame < 6; frame++) {
+            await runtime.update(away);
+            levels.push(
+                Math.max(
+                    ...selected()
+                        .filter((tile) => tile.x < 2 ** tile.lod / 2)
+                        .map((tile) => tile.lod),
+                ),
+            );
+        }
+        await runtime.dispose();
+        return levels;
+    }
+
+    it("keeps a refinement for the configured number of frames once nothing requires it", async () => {
+        expect(await deepestLevelsAfterMovingAway(3)).toEqual([3, 3, 3, 1, 1, 1]);
+    });
+
+    it("coarsens at once without delay", async () => {
+        expect((await deepestLevelsAfterMovingAway(0))[0]).toBe(1);
     });
 });
 
