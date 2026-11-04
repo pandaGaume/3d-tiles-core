@@ -92,6 +92,45 @@ describe("DrapeInstanceCut", () => {
         expect(keys(instances)).toEqual(["6/20/20", "6/20/21", "6/21/20", "6/21/21"]);
     });
 
+    it("reports the finer and coarser neighbours across each edge", () => {
+        const cut = new DrapeInstanceCut();
+        // A terrain tile and its east neighbour split into four finer terrain tiles.
+        const instances = cut.update(tiles("5/10/10", "6/22/20", "6/23/20", "6/22/21", "6/23/21"), [], 0);
+        const byKey = Object.fromEntries(instances.map((instance) => [`${instance.address.lod}/${instance.address.x}/${instance.address.y}`, instance]));
+
+        expect(byKey["5/10/10"]!.finerEdges).toBe(DrapeInstanceEdge.E);
+        expect(byKey["5/10/10"]!.coarserEdges).toBe(0);
+        expect(byKey["6/22/20"]!.coarserEdges).toBe(DrapeInstanceEdge.W);
+        expect(byKey["6/22/20"]!.finerEdges).toBe(0);
+        expect(byKey["6/23/20"]!.coarserEdges | byKey["6/23/20"]!.finerEdges).toBe(0);
+    });
+
+    it("reads the heights of each edge and corner from the coarsest terrain tile touching it", () => {
+        const cut = new DrapeInstanceCut();
+        const instances = cut.update(tiles("5/10/10", "6/22/20", "6/23/20", "6/22/21", "6/23/21"), [], 0);
+        const fine = instances.find(({ address }) => address.lod === 6 && address.x === 22 && address.y === 20)!;
+        const coarse = { lod: 5, x: 10, y: 10 };
+        const own = { lod: 6, x: 22, y: 20 };
+
+        // N, E, S, W: only the west edge touches the coarser terrain tile.
+        expect(fine.edgeTerrain).toEqual([own, own, own, coarse]);
+        // NW, NE, SE, SW: the two western corners lie on the coarser tile.
+        expect(fine.cornerTerrain).toEqual([coarse, own, own, coarse]);
+
+        const coarseInstance = instances.find(({ address }) => address.lod === 5)!;
+        expect(coarseInstance.edgeTerrain).toEqual([coarse, coarse, coarse, coarse]);
+    });
+
+    it("finds a corner neighbour two levels finer across a diagonal", () => {
+        const cut = new DrapeInstanceCut();
+        // 7/43/39 touches the north-east corner of 5/10/10 (point 11/10 at level 5) through the diagonal only.
+        const instances = cut.update(tiles("5/10/10", "5/11/9"), tiles("7/44/39"), 0);
+        const coarse = instances.find(({ address }) => address.lod === 5 && address.x === 10)!;
+
+        expect(coarse.cornerTerrain[1]).toEqual({ lod: 5, x: 10, y: 10 });
+        expect(instances.some(({ address }) => address.lod === 7 && address.x === 44 && address.y === 39)).toBe(true);
+    });
+
     it("rejects a negative maximum depth", () => {
         expect(() => new DrapeInstanceCut({ maxDepth: -1 })).toThrow(RangeError);
     });

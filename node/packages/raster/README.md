@@ -49,7 +49,7 @@ Pass `create` to build another grid type from each stitched raster, as `@spacexr
 
 ## Draping
 
-`drapeCells` and `drapeDepth` drape a terrain tile with `4^k` raster pages, one per cell, for the mesh draping engine. `DrapeInstanceCut` computes the instances of the GPU instancing engine: the finer of the terrain and imagery cuts at each place, balanced so that edges join instances at most one level apart, with the edges where each instance meets a coarser one. See [Raster draping](https://github.com/pandaGaume/3d-tiles-core/blob/main/docs/draping.md).
+`drapeCells` and `drapeDepth` drape a terrain tile with `4^k` raster pages, one per cell, for the mesh draping engine. `DrapeInstanceCut` computes the instances of the GPU instancing engine: the finer of the terrain and imagery cuts at each place, balanced so that edges join instances at most one level apart, with the level of the neighbours across each edge and the terrain tile whose DEM gives the heights of each edge and corner, so that instances join without cracks. See [Raster draping](https://github.com/pandaGaume/3d-tiles-core/blob/main/docs/draping.md).
 
 ```ts
 const cut = new DrapeInstanceCut({ holdMilliseconds: 500 });
