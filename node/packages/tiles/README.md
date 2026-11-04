@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/pandaGaume/3d-tiles-core/main/assets/brand/spacexr-component.png" alt="SpaceXR Component" height="56">
+
 # @spacexr/tiles
 
 Renderer-neutral building blocks for web tile pyramids: addressing, neighbours, on-demand tile pyramids and HTTP tile sources. The package depends neither on 3D Tiles nor on the tile content; `@spacexr/3d-tiles-runtime` uses it to expose web map and DEM pyramids as implicit tilesets, [`@spacexr/raster`](https://github.com/pandaGaume/3d-tiles-core/tree/main/node/packages/raster) builds raster pyramids on it and [`@spacexr/dem`](https://github.com/pandaGaume/3d-tiles-core/tree/main/node/packages/dem) elevation models.

@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/pandaGaume/3d-tiles-core/main/assets/brand/spacexr-component.png" alt="SpaceXR Component" height="56">
+
 # @spacexr/raster
 
 Renderer-neutral tile rasters: grids of values attached to web tiles, whatever they mean. Heights, colours, masks and normals share the same layout, bilinear sampling, image decoding, seamless stitching of neighbouring tiles and on-demand pyramids. Tiles, neighbours and pyramids are those of [`@spacexr/tiles`](https://github.com/pandaGaume/3d-tiles-core/tree/main/node/packages/tiles); [`@spacexr/dem`](https://github.com/pandaGaume/3d-tiles-core/tree/main/node/packages/dem) builds elevation models on this package.

@@ -1,6 +1,8 @@
 [![CI (Node)](https://github.com/pandaGaume/3d-tiles-core/actions/workflows/ci-node.yml/badge.svg)](https://github.com/pandaGaume/3d-tiles-core/actions/workflows/ci-node.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
+<img src="assets/brand/spacexr-component.png" alt="SpaceXR Component" height="56">
+
 <p align="center">
   <img src="assets/brand/3d-tiles-core-logo.png" alt="3D Tiles Core" width="900">
 </p>
@@ -24,7 +26,7 @@ conformance/         Shared positive and negative conformance fixtures, includin
 dotnet/              Reserved for the future .NET implementation
 cpp/                 Reserved for the future C++ and Unreal implementation
 docs/                Cross-language architecture and compatibility rules
-assets/brand/         Project logo and icon
+assets/brand/        Project logo, icon and SpaceXR Component mark
 ```
 
 The core package deliberately excludes rendering and streaming state. The runtime package builds mutable traversal nodes around those immutable contracts and delegates every host-specific operation to an adaptation layer.
@@ -51,7 +53,7 @@ The Node workspace publishes `@spacexr/3d-tiles-core`, `@spacexr/tiles`, `@space
 
 ## Babylon.js
 
-The Babylon.js 9 integration lives in [3d-tiles-babylon](https://github.com/pandaGaume/3d-tiles-babylon): the `@spacexr/3d-tiles-babylon` package, which binds the runtime to Babylon cameras, the render loop and glTF content, and the Google Photorealistic 3D Tiles and Mapzen implicit grid examples.
+The Babylon.js 9 integration lives in [3d-tiles-babylon](https://github.com/pandaGaume/3d-tiles-babylon): the `@spacexr/3d-tiles-babylon` package, which binds the runtime to Babylon cameras, the render loop and glTF content, drapes imagery on terrain and renders terrain through interchangeable engines, and the Google Photorealistic 3D Tiles and Mapzen implicit grid examples.
 
 The project evaluated Babylon Lite as an alternative renderer and retained Babylon.js with WebGPU as the reference implementation. See [Renderer evaluation and decision](docs/renderer-evaluation.md) for the measurements and navigation findings.
 
@@ -85,6 +87,7 @@ The pixel-art identity combines a tiled spatial hierarchy with geological layers
 
 - [Horizontal logo](assets/brand/3d-tiles-core-logo.png)
 - [Square icon](assets/brand/3d-tiles-core-icon.png)
+- [SpaceXR Component mark](assets/brand/spacexr-component.png), shown at the top of every README of the SpaceXR components, from the [full-size original](docs/images/Logo%20pixel-art%20SpaceXR%20Component.png)
 
 ## License
 

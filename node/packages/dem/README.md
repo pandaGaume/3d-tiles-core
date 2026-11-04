@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/pandaGaume/3d-tiles-core/main/assets/brand/spacexr-component.png" alt="SpaceXR Component" height="56">
+
 # @spacexr/dem
 
 Renderer-neutral digital elevation models. A height grid is a one-channel raster of [`@spacexr/raster`](https://github.com/pandaGaume/3d-tiles-core/tree/main/node/packages/raster), so DEM tiles are sampled, stitched and cached like any other raster; this package adds the elevation encodings, decoding off the rendering thread, statistics, normals, the Mapzen Terrarium preset and continuous surfaces over several levels of detail.

@@ -1,3 +1,5 @@
+<img src="https://raw.githubusercontent.com/pandaGaume/3d-tiles-core/main/assets/brand/spacexr-component.png" alt="SpaceXR Component" height="56">
+
 # @spacexr/grid
 
 Renderer-neutral terrain grid topologies with crack-free junctions between neighbouring levels of detail. The package produces normalized `u, v` topologies that an adapter projects onto a region, an ellipsoid or a plane, on the CPU or in a vertex shader. Neighbours, levels of detail and axes are those of the tiles of [`@spacexr/tiles`](https://github.com/pandaGaume/3d-tiles-core/tree/main/node/packages/tiles).
