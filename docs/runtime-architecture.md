@@ -171,6 +171,8 @@ A REPLACE refinement shows the children of a tile only once every visible child 
 
 A refinement required only by the quadtree balance ends as soon as the finer neighbour leaves the view, and a screen-space error close to the threshold dips under it while the camera moves. `refinementHysteresisRatio` lowers the threshold a refined tile must stay above; `coarseningDelayFrames` adds a delay in frames: a refined tile coarsens only once nothing has required its refinement for that many consecutive frames.
 
+Leaving the view cancels the loads of the tiles that leave the working set. A cancelled load does not count against `maxLoadAttempts`, which only bounds failures, and a load cancelled before it started returns its contents to the idle state, so that they are requested again when the tile comes back. The children of a refined tile are requested together: every visible child is collected even after one is found not ready.
+
 ## Hooks and specialization
 
 `IRuntimeHooks` exposes before and after hooks for tileset loading, frame traversal, content loading, attachment, detachment, metadata resolution, glyph publication and selection changes. Hook failures are reported as runtime errors without corrupting the traversal.

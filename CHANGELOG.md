@@ -47,6 +47,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- Tiles seen before load again after zooming out and in: a cancelled load no longer counts against `maxLoadAttempts`, and the contents of an activation cancelled before it started return to the idle state instead of staying queued forever.
+- The children of a refined tile are requested together instead of one after another.
+
 - The quadtree balance no longer coarsens a refinement already displayed when a neighbour it cannot follow yet comes into view; the edge stays reported as unbalanced while the neighbour refines, instead of flickering.
 
 ### Removed

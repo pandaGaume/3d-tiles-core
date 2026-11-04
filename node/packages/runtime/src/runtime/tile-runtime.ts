@@ -517,7 +517,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
 
         // The balance waits for these children: load them before tiles chosen by screen-space error alone.
         const priorityFloor = balanceRequested ? BALANCE_LOAD_PRIORITY : 0;
-        const replacementReady = node.children.every((child) => this.collectReplacementFront(child, camera, requested, priorityFloor));
+        // Every child is collected, so that siblings load together rather than one after another.
+        const replacementReady = node.children
+            .map((child) => this.collectReplacementFront(child, camera, requested, priorityFloor))
+            .every(Boolean);
         if (replacementReady) {
             for (const child of node.children) this.visit(child, camera, desired, requested);
         } else {
@@ -569,7 +572,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             return potential.every((content) => content.kind === TileContentKind.Renderable && content.status === TileReadinessState.Ready);
         }
         if (node.children.length === 0) return true;
-        return node.children.every((child) => this.collectReplacementFront(child, camera, requested, priorityFloor));
+        return node.children.map((child) => this.collectReplacementFront(child, camera, requested, priorityFloor)).every(Boolean);
     }
 
     /**
@@ -867,11 +870,16 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
                 content.attempts < this.maxLoadAttempts,
         );
         if (pending.length === 0 && !notifyEvenWhenReady) return;
+        const previous = pending.map((content) => content.status);
         for (const content of pending) content.status = TileReadinessState.Queued;
-        this.refreshNodeReadiness(node);
         const key = this.pipelineActivationKey(node);
         const added = this.scheduler.enqueue(key, priority, (signal) => this.activatePipelineTile(node, pending, priority, signal));
-        if (!added) return;
+        if (!added) {
+            // An activation of the tile is already queued or running without these contents: request them again later.
+            pending.forEach((content, index) => (content.status = previous[index]!));
+            return;
+        }
+        this.refreshNodeReadiness(node);
         for (const content of pending) {
             requested.push(content);
             this.events.emit({ type: "content-state", tile: node, content });
@@ -939,6 +947,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             cancelled: async (contentId) => {
                 const content = findPending(contentId);
                 if (!content) return;
+                // A cancelled attempt did not fail: it does not count against maxLoadAttempts.
+                content.attempts = Math.max(0, content.attempts - 1);
                 content.status = TileReadinessState.Cancelled;
                 this.events.emit({ type: "content-state", tile: node, content });
                 this.refreshNodeReadiness(node);
@@ -980,6 +990,14 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             node.activationId++;
             node.selectionState = TileSelectionState.Inactive;
             this.scheduler.cancel(this.pipelineActivationKey(node));
+            // An activation that left the queue before it started never settles its contents: they become idle again.
+            let requeue = false;
+            for (const content of node.contents) {
+                if (content.status !== TileReadinessState.Queued) continue;
+                content.status = TileReadinessState.Idle;
+                requeue = true;
+            }
+            if (requeue) this.refreshNodeReadiness(node);
             if (this.adapter.activation) {
                 await this.adapter.activation.deactivate({ runtimeId: this.id, tile: node, activationId });
             }
@@ -1005,6 +1023,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             if (!contentAdapter) throw new Error("The legacy content adapter is not configured.");
             const result = await contentAdapter.load(this.contentLoadContext(node, content), signal);
             if (signal.aborted) {
+                content.attempts = Math.max(0, content.attempts - 1);
                 content.status = TileReadinessState.Cancelled;
                 return;
             }
@@ -1036,6 +1055,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         } catch (error) {
             content.error = error;
             content.status = signal.aborted ? TileReadinessState.Cancelled : TileReadinessState.Failed;
+            if (signal.aborted) content.attempts = Math.max(0, content.attempts - 1);
             await this.reportError("content.load", error, node, content);
         } finally {
             this.refreshNodeReadiness(node);
