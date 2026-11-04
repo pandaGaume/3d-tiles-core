@@ -1,16 +1,7 @@
 import type { IImageDecoder, IRgbaImage } from "@spacexr/raster";
 import { describe, expect, it } from "vitest";
 
-import { createHeightGrid, decodeDemTile, decodeHeightGrid, grayscaleHeight, mapboxTerrainRgbHeight, terrariumHeight } from "../src";
-
-/** Encodes a height in Terrarium pixels, the inverse of the decoder. */
-function terrariumPixel(height: number): [number, number, number, number] {
-    const value = height + 32768;
-    const red = Math.floor(value / 256);
-    const green = Math.floor(value) % 256;
-    const blue = Math.round((value - Math.floor(value)) * 256);
-    return [red, green, blue, 255];
-}
+import { createHeightGrid, decodeDemTile, decodeHeightGrid, grayscaleHeight, mapboxTerrainRgbHeight, terrariumHeight, terrariumPixel } from "../src";
 
 function image(pixels: Array<[number, number, number, number]>, width: number): IRgbaImage {
     return { width, height: pixels.length / width, channels: 4, data: new Uint8ClampedArray(pixels.flat()) };

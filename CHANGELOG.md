@@ -18,6 +18,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Uppercase `I` prefix convention for every TypeScript interface.
 - Standard implicit QUADTREE and OCTREE traversal, sparse subtree availability, JSON and binary subtree codecs, and XYZ or TMS Web Map pyramid adaptation.
 - Budgeted LRU navigation cache for renderables, subtree payloads and materialized implicit branches.
+- Terrarium elevation encoding in `@spacexr/dem`: `terrariumPixel` and `encodeTerrariumGrid` turn metre heights into raw RGBA pixels at a step of 1/256 metre, keep NoData distinct from the lowest height, and reject heights out of range.
 - Optional real-time runtime statistics, metric aggregation, cache events and eviction hooks.
 - External `@spacexr/geodesy` integration for ellipsoid-aware ECEF regions and horizon culling.
 - Babylon.js 9 example for Google Photorealistic 3D Tiles with the native `GeospatialCamera`, large-world rendering, environment-based credentials and dynamic attribution.
