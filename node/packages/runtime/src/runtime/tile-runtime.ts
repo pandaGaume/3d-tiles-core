@@ -10,6 +10,8 @@ import {
 } from "../implicit/coordinates";
 import type {
     IImplicitCoordinates,
+    IImplicitSubtreeGraft,
+    IImplicitTileResolver,
     ILoadedImplicitSubtree,
     IRuntimeImplicitContext,
     IRuntimeImplicitSubtree,
@@ -94,7 +96,7 @@ export interface ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHa
      * refinement then survives a neighbour leaving the view for a moment, or a
      * screen-space error dipping under the threshold while the camera turns,
      * instead of coarsening and refining again a few frames later. Defaults to
-     * 0, which coarsens at once.
+     * 20; 0 coarsens at once.
      */
     coarseningDelayFrames?: number;
     /**
@@ -110,7 +112,7 @@ export interface ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHa
      * children only once every visible child is ready; without preloading, a
      * child entering the view as the camera turns is not ready, and the whole
      * refined area falls back to the coarser tile until it loads. Defaults to
-     * false.
+     * true; false saves the loads of tiles that may never enter the view.
      */
     preloadSiblings?: boolean;
     /**
@@ -131,6 +133,8 @@ export interface ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHa
     maxConcurrentLoads?: number;
     maxLoadAttempts?: number;
     cache?: IRuntimeCacheOptions | false;
+    /** Clock of the cache retention, in milliseconds. Defaults to `performance.now`. */
+    clock?: () => number;
     instrumentation?: boolean | IRuntimeInstrumentationOptions;
     hooks?: readonly IRuntimeHooks<TCamera, TSpatial, TContentHandle, TGlyphHandle>[];
 }
@@ -215,6 +219,9 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     private currentCameraChanges = CameraChangeFlags.None;
     private cameraDirty = false;
     private frame = 0;
+    /** Start time of the recent frames, oldest first; older frames are beyond the cache retention. */
+    private readonly frameTimes = new Map<number, number>();
+    private readonly clock: () => number;
     private disposed = false;
     private refreshNeeded = false;
 
@@ -235,8 +242,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             throw new RangeError("refinementHysteresisRatio must be in the interval [0, 1).");
         }
         this.stableReplacementCut = options.stableReplacementCut ?? true;
-        this.preloadSiblings = options.preloadSiblings ?? false;
-        this.coarseningDelayFrames = Math.max(0, Math.trunc(options.coarseningDelayFrames ?? 0));
+        this.preloadSiblings = options.preloadSiblings ?? true;
+        this.coarseningDelayFrames = Math.max(0, Math.trunc(options.coarseningDelayFrames ?? 20));
+        this.clock = options.clock ?? (() => performance.now());
+        this.frameTimes.set(0, this.clock());
         this.quadtreeBalance = options.quadtreeBalance
             ? { wrapX: typeof options.quadtreeBalance === "object" && options.quadtreeBalance.wrapX === true }
             : undefined;
@@ -387,6 +396,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         // are consumed by the next caller-driven frame.
         this.refreshNeeded = false;
         const currentFrame = ++this.frame;
+        this.recordFrameTime(currentFrame);
         const beforeContext: IFrameHookContext<TCamera, TSpatial, TContentHandle, TGlyphHandle> = {
             runtimeId: this.id,
             frame: currentFrame,
@@ -627,7 +637,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         const implicit = node.implicit;
         if (!this.quadtreeBalance || !implicit || implicit.context.implicitTiling.subdivisionScheme !== "QUADTREE") return undefined;
         const { context, coordinates } = implicit;
-        const address = this.adapter.implicitTiles?.addressOf?.({
+        const address = this.implicitResolver(context)?.addressOf?.({
             documentUri: node.document.uri,
             rootTile: context.rootTile,
             implicitTiling: context.implicitTiling,
@@ -1126,9 +1136,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
      * and never load. Children whose own content already reported a measured volume are left unchanged.
      */
     private refreshImplicitChildBounds(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): void {
-        if (!this.adapter.implicitTiles) return;
         for (const child of node.children) {
-            if (!child.implicit || child.contentBoundsRefined) continue;
+            if (!child.implicit || child.contentBoundsRefined || !this.implicitResolver(child.implicit.context)) continue;
             const resolved = this.createImplicitTileSource(child.implicit, child.document);
             child.spatial = this.adapter.spatial.derive({
                 tile: { ...child.source, boundingVolume: resolved.boundingVolume },
@@ -1547,7 +1556,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
 
     private createImplicitTileSource(implicit: IRuntimeImplicitTile, document: IRuntimeTilesetDocument, root = false): ITile {
         const computed = computeImplicitTile(implicit.context.rootTile, implicit.context.implicitTiling, implicit.coordinates);
-        const override = this.adapter.implicitTiles?.resolve({
+        const override = this.implicitResolver(implicit.context)?.resolve({
             documentUri: document.uri,
             rootTile: implicit.context.rootTile,
             implicitTiling: implicit.context.implicitTiling,
@@ -1569,7 +1578,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         const implicit = node.implicit;
         if (!implicit) return [];
         const computed = computeImplicitTile(implicit.context.rootTile, implicit.context.implicitTiling, implicit.coordinates);
-        const override = this.adapter.implicitTiles?.resolve({
+        const override = this.implicitResolver(implicit.context)?.resolve({
             documentUri: node.document.uri,
             rootTile: implicit.context.rootTile,
             implicitTiling: implicit.context.implicitTiling,
@@ -1648,7 +1657,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             };
             try {
                 await this.invokeHooks("beforeSubtreeLoad", (hook) => hook.beforeSubtreeLoad?.(hookContext), node);
-                const loader = this.adapter.subtrees;
+                const loader = implicit.context.subtrees ?? this.adapter.subtrees;
                 if (!loader) throw new Error(`Implicit subtree loader is required for ${subtree.uri}.`);
                 const loaded = await loader.load({
                     uri: subtree.uri,
@@ -1720,24 +1729,32 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         for (let index = 0; index < childCount; index++) {
             const coordinates = implicitChildCoordinates(implicit.coordinates, index, tiling.subdivisionScheme);
             const localCoordinates = implicitLocalCoordinates(coordinates, implicit.subtree.coordinates);
-            let subtree = implicit.subtree;
-            let available: boolean;
-            let childLocal = localCoordinates;
-            if (localCoordinates.level < tiling.subtreeLevels) {
-                available = subtree.availability!.isTileAvailable(localCoordinates);
-            } else {
-                available = subtree.availability!.isChildSubtreeAvailable(localCoordinates);
-                if (available) {
-                    subtree = this.createImplicitSubtree(implicit.context, coordinates, node.document);
-                    childLocal = {
-                        level: 0,
-                        x: 0,
-                        y: 0,
-                        ...(tiling.subdivisionScheme === "OCTREE" ? { z: 0 } : {}),
-                    };
-                }
-            }
+            const subtreeRoot = localCoordinates.level >= tiling.subtreeLevels;
+            const available = subtreeRoot
+                ? implicit.subtree.availability!.isChildSubtreeAvailable(localCoordinates)
+                : implicit.subtree.availability!.isTileAvailable(localCoordinates);
             if (!available) continue;
+            const graft = this.implicitResolver(implicit.context)?.subtreeAt?.({
+                documentUri: node.document.uri,
+                rootTile: implicit.context.rootTile,
+                implicitTiling: tiling,
+                coordinates,
+            });
+            if (graft) {
+                node.children.push(this.createGraftedNode(node, graft, `implicit-${index}`));
+                continue;
+            }
+            let subtree = implicit.subtree;
+            let childLocal = localCoordinates;
+            if (subtreeRoot) {
+                subtree = this.createImplicitSubtree(implicit.context, coordinates, node.document);
+                childLocal = {
+                    level: 0,
+                    x: 0,
+                    y: 0,
+                    ...(tiling.subdivisionScheme === "OCTREE" ? { z: 0 } : {}),
+                };
+            }
             const childImplicit: IRuntimeImplicitTile = {
                 context: implicit.context,
                 coordinates,
@@ -1749,6 +1766,56 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             const source = this.createImplicitTileSource(childImplicit, node.document);
             node.children.push(this.createNode(source, node.document, node, `implicit-${index}`, childImplicit));
         }
+    }
+
+    /** Resolver of the tiles of an implicit context: the resolver of its registered subtree, or that of the adapter. */
+    private implicitResolver(context: IRuntimeImplicitContext): IImplicitTileResolver | undefined {
+        return context.resolver ?? this.adapter.implicitTiles;
+    }
+
+    /**
+     * Creates the root of a registered implicit subtree in place of an implicit tile: a new implicit context with
+     * the tiling, contents, resolver and subtree loader of the subtree, rooted at the tile.
+     */
+    private createGraftedNode(
+        parent: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        graft: IImplicitSubtreeGraft,
+        segment: string,
+    ): IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle> {
+        const tiling = graft.tile.implicitTiling;
+        if (!tiling) throw new Error(`The subtree registered under ${parent.id} has no implicitTiling.`);
+        const context: IRuntimeImplicitContext = {
+            id: `${parent.id}/${segment}`,
+            rootTile: graft.tile,
+            implicitTiling: tiling,
+            contentTemplates: graft.tile.contents ? [...graft.tile.contents] : graft.tile.content ? [graft.tile.content] : [],
+            ...(graft.resolver
+                ? { resolver: graft.resolver }
+                : parent.implicit?.context.resolver
+                  ? { resolver: parent.implicit.context.resolver }
+                  : {}),
+            ...(graft.subtrees
+                ? { subtrees: graft.subtrees }
+                : parent.implicit?.context.subtrees
+                  ? { subtrees: parent.implicit.context.subtrees }
+                  : {}),
+        };
+        const coordinates: IImplicitCoordinates = {
+            level: 0,
+            x: 0,
+            y: 0,
+            ...(tiling.subdivisionScheme === "OCTREE" ? { z: 0 } : {}),
+        };
+        const implicit: IRuntimeImplicitTile = {
+            context,
+            coordinates,
+            localCoordinates: coordinates,
+            subtree: this.createImplicitSubtree(context, coordinates, parent.document),
+            childrenMaterialized: false,
+            metadataApplied: false,
+        };
+        const source = this.createImplicitTileSource(implicit, parent.document, true);
+        return this.createNode(source, parent.document, parent, segment, implicit);
     }
 
     private tileContext(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): ITileContext<TSpatial> {
@@ -1889,6 +1956,28 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         }
     }
 
+    /** Records the start time of a frame and forgets the frames older than the cache retention. */
+    private recordFrameTime(frame: number): void {
+        const now = this.clock();
+        this.frameTimes.set(frame, now);
+        for (const [oldFrame, startedAt] of this.frameTimes) {
+            if (now - startedAt <= this.cacheOptions.unusedRetentionMilliseconds) break;
+            this.frameTimes.delete(oldFrame);
+        }
+    }
+
+    /**
+     * Whether a resource last used in a frame has been unused for longer than the cache retention: the retention time,
+     * or the deprecated frame count when the application set one. A frame no longer recorded is older than the
+     * retention time.
+     */
+    private isUnusedTooLong(lastTouchedFrame: number): boolean {
+        const frames = this.cacheOptions.unusedFrameRetention;
+        if (frames !== undefined) return this.frame - lastTouchedFrame > frames;
+        const touchedAt = this.frameTimes.get(lastTouchedFrame);
+        return touchedAt === undefined || this.clock() - touchedAt > this.cacheOptions.unusedRetentionMilliseconds;
+    }
+
     private contentEvictionReason(
         content: IRuntimeContent<TContentHandle>,
         entries: number,
@@ -1896,7 +1985,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         gpuBytes: number,
         force: boolean,
     ): RuntimeCacheEvictionReason | undefined {
-        if (force || this.frame - content.lastTouchedFrame > this.cacheOptions.unusedFrameRetention) return "stale";
+        if (force || this.isUnusedTooLong(content.lastTouchedFrame)) return "stale";
         if (entries > this.cacheOptions.maxContentEntries) return "entry-budget";
         if (cpuBytes > this.cacheOptions.maxContentCpuBytes) return "cpu-budget";
         if (gpuBytes > this.cacheOptions.maxContentGpuBytes) return "gpu-budget";
@@ -1957,7 +2046,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             .filter((entry) => !this.isSubtreeProtected(entry))
             .sort((left, right) => left.subtree.lastTouchedFrame - right.subtree.lastTouchedFrame);
         for (const candidate of candidates) {
-            const stale = this.frame - candidate.subtree.lastTouchedFrame > this.cacheOptions.unusedFrameRetention;
+            const stale = this.isUnusedTooLong(candidate.subtree.lastTouchedFrame);
             let reason: RuntimeCacheEvictionReason | undefined;
             if (force || stale) reason = "stale";
             else if (entries > this.cacheOptions.maxSubtreeEntries) reason = "entry-budget";
@@ -2033,7 +2122,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             if (!this.isImplicitBranchRoot(parent)) continue;
             const descendants = this.branchDescendants(parent);
             if (descendants.length === 0 || this.isBranchProtected(descendants)) continue;
-            const stale = descendants.every((node) => this.frame - node.lastTouchedFrame > this.cacheOptions.unusedFrameRetention);
+            const stale = descendants.every((node) => this.isUnusedTooLong(node.lastTouchedFrame));
             let reason: RuntimeCacheEvictionReason | undefined;
             if (force || stale) reason = "stale";
             else if (this.nodes.size > this.cacheOptions.maxMaterializedTiles) reason = "node-budget";

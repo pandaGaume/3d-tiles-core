@@ -81,7 +81,9 @@ Detaching content from the scene does not immediately destroy its renderer handl
 - content GPU bytes;
 - loaded subtree entries;
 - loaded subtree bytes;
-- the number of frames an inactive resource may be retained.
+- the time an inactive resource may be retained, 60 seconds by default.
+
+Retention is measured in time, not in frames: the runtime only processes a frame while the camera moves or loads settle, so a frame count would be a few seconds while the camera turns and endless while it rests. The deprecated `unusedFrameRetention` still applies a frame count when an application sets it. The byte budgets bound the memory; the entry budget, 4096 contents by default, only bounds the bookkeeping of many small contents.
 
 The adaptation layer reports `cpuBytes`, `gpuBytes` and `networkBytes` in the renderable `ContentLoadResult`. These values are authoritative because only the renderer integration knows the actual cost of decoded geometry, textures, buffers and engine objects. Missing values are treated as zero, so entry budgets still work even before an adapter can measure memory precisely.
 
@@ -94,12 +96,12 @@ const runtime = new TileRuntime({
   adapter,
   cache: {
     maxMaterializedTiles: 4096,
-    maxContentEntries: 512,
+    maxContentEntries: 4096,
     maxContentCpuBytes: 512 * 1024 * 1024,
     maxContentGpuBytes: 1024 * 1024 * 1024,
     maxSubtreeEntries: 128,
     maxSubtreeBytes: 64 * 1024 * 1024,
-    unusedFrameRetention: 120,
+    unusedRetentionMilliseconds: 60_000,
   },
 });
 ```
@@ -152,6 +154,17 @@ This spatial override matters because standard 3D Tiles `region` subdivision is 
 
 The content port receives `implicitCoordinates`, the synthesized tile bounding volume and the derived spatial state. A Babylon terrain adapter can therefore share normalized grid topology while projecting unique per-tile geometry from the geographic region and the selected ellipsoid. Curvature and east-west pinching then follow latitude exactly. A later GPU implementation can bind the region, ellipsoid and DEM as per-instance shader inputs, while keeping the same runtime ports and pooling resources across presentation, hiding and release. The generic runtime does not create Babylon meshes or shaders.
 
+### Registered subtrees
+
+An application may control the refinement of an implicit tileset region by region, by registering implicit subtrees with their own rules. The implicit resolver implements `subtreeAt`: for each tile the tileset makes available, before the tile is created, it returns the subtree registered at that tile, or nothing.
+
+- From the registered tile down, the subtree replaces the rules of the tileset: its `implicitTiling`, hence its own levels and availability, its content templates, its resolver and its subtree loader. Its root tile takes the place of the registered tile, contents included.
+- A subtree may stop the refinement early, with fewer levels; make tiles unavailable, through its availability; supply other contents, such as grids and textures of the application; or refine deeper than the tileset.
+- The resolver of a subtree is asked for the subtrees registered inside it, so subtrees nest; the deepest one containing a tile applies there. Without its own resolver or loader, a subtree uses those of the tileset.
+- A subtree replaces a tile the tileset makes available. Its root is a tile of the tileset, never the root of an implicit tileset, which the tileset itself defines.
+- Quadtree balancing, the content ports and the spatial metric see the tiles of a subtree like any other: through `addressOf`, a subtree resolver locates its tiles in the shared pyramid.
+- A subtree that stops the refinement early also bounds its neighbours: the quadtree balance keeps them within one level of its deepest tiles.
+
 ### Quadtree balance
 
 Screen-space-error refinement decides each tile on its own, so two neighbouring branches can be displayed several levels apart, for example close to a grazing camera. Terrain grids can only connect edges one level apart. With `quadtreeBalance`, the runtime keeps the displayed tiles of implicit QUADTREE tilesets within one level of their edge neighbours (2:1 balance):
@@ -167,9 +180,9 @@ Diagonal neighbours do not constrain a tile, because tile corners exist at every
 
 ### Turning the camera
 
-A REPLACE refinement shows the children of a tile only once every visible child is ready. Children outside the view are not required, and are not loaded by default; when the camera turns, a child entering the view is not ready, and the whole refined area falls back to the ready ancestor until it loads, then refines again. With `preloadSiblings`, the children of every refined tile that lie outside the view are loaded in the background, at a quarter of their screen-space error as priority, so that they enter the view ready. Their own descendants are not loaded.
+A REPLACE refinement shows the children of a tile only once every visible child is ready. Children outside the view are not required to display a refinement. With `preloadSiblings`, enabled by default, the children of every refined tile that lie outside the view are loaded in the background, at a quarter of their screen-space error as priority, so that they enter the view ready when the camera turns. Their own descendants are not loaded. Without it, a child entering the view is not ready, and the whole refined area falls back to the ready ancestor until it loads, then refines again; an application may turn it off to save the loads of tiles that may never enter the view. Zooming out widens the view the same way: the children of a refined tile that enter the view must be ready before it shows them, and without preloading the tile falls back to a coarser ready ancestor, dropping the finer tiles already displayed, until they load. The tiles on the path of a displayed tile never leave the cache, since each is on the replacement front of its parent.
 
-A refinement required only by the quadtree balance ends as soon as the finer neighbour leaves the view, and a screen-space error close to the threshold dips under it while the camera moves. `refinementHysteresisRatio` lowers the threshold a refined tile must stay above; `coarseningDelayFrames` adds a delay in frames: a refined tile coarsens only once nothing has required its refinement for that many consecutive frames.
+A refinement required only by the quadtree balance ends as soon as the finer neighbour leaves the view, and a screen-space error close to the threshold dips under it while the camera moves. `refinementHysteresisRatio` lowers the threshold a refined tile must stay above; `coarseningDelayFrames`, 20 by default, adds a delay in frames: a refined tile coarsens only once nothing has required its refinement for that many consecutive frames.
 
 Leaving the view cancels the loads of the tiles that leave the working set. A cancelled load does not count against `maxLoadAttempts`, which only bounds failures, and a load cancelled before it started returns its contents to the idle state, so that they are requested again when the tile comes back. The children of a refined tile are requested together: every visible child is collected even after one is found not ready.
 

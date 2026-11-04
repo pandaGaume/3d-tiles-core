@@ -402,8 +402,12 @@ describe("TileRuntime implicit traversal", () => {
             cache: {
                 maxMaterializedTiles: 4,
                 maxSubtreeEntries: 1,
+                // The deprecated frame count still applies when an application sets it.
                 unusedFrameRetention: 1000,
             },
+            // Immediate coarsening and no preloading: the scenario follows each frame.
+            coarseningDelayFrames: 0,
+            preloadSiblings: false,
         });
 
         await runtime.update({ multiplier: 1 });

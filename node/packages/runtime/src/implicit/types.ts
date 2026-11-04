@@ -66,6 +66,29 @@ export interface IImplicitTileResolver {
      * within each implicit tileset only.
      */
     addressOf?(context: IImplicitTileAddressContext): ITileAddress | undefined;
+    /**
+     * Implicit subtree registered at an implicit tile, whose rules apply from
+     * that tile down; `undefined` keeps the rules of the tileset. Called for
+     * each tile the tileset makes available, before the tile is created.
+     */
+    subtreeAt?(context: IImplicitTileAddressContext): IImplicitSubtreeGraft | undefined;
+}
+
+/**
+ * An implicit subtree registered at a tile of an implicit tileset, with its own rules.
+ *
+ * From the registered tile down, the subtree replaces the rules of the tileset: its implicit tiling, hence its own
+ * levels and availability, its content templates, its resolver and its subtree loader. Its root tile takes the place
+ * of the registered tile, contents included. A subtree may stop the refinement early, make tiles unavailable, supply
+ * other contents, or go deeper than the tileset. Subtrees may register subtrees of their own.
+ */
+export interface IImplicitSubtreeGraft {
+    /** Root tile of the subtree: an implicit root tile, with `implicitTiling` and the content templates of the subtree. */
+    tile: ITile;
+    /** Resolves the tiles of the subtree, and the subtrees registered inside it. Defaults to the resolver of the tileset. */
+    resolver?: IImplicitTileResolver;
+    /** Loads the availability subtrees of the subtree. Defaults to the subtree loader of the adapter. */
+    subtrees?: IImplicitSubtreeLoader;
 }
 
 export interface IImplicitMetadataDecodeRequest {
@@ -95,6 +118,10 @@ export interface IRuntimeImplicitContext {
     rootTile: ITile;
     implicitTiling: IImplicitTiling;
     contentTemplates: readonly IContent[];
+    /** Resolver of a registered subtree, in place of the resolver of the adapter. */
+    resolver?: IImplicitTileResolver;
+    /** Subtree loader of a registered subtree, in place of the loader of the adapter. */
+    subtrees?: IImplicitSubtreeLoader;
 }
 
 export interface IRuntimeImplicitSubtree {

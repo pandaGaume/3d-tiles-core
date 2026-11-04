@@ -227,6 +227,9 @@ describe("TileRuntime", () => {
             adapter,
             maxScreenSpaceError: 10,
             refinementHysteresisRatio: 0.2,
+            // Immediate coarsening and no preloading: the scenario follows each frame.
+            coarseningDelayFrames: 0,
+            preloadSiblings: false,
         });
 
         await runtime.update({ multiplier: 1 });
@@ -281,7 +284,10 @@ describe("TileRuntime", () => {
             uri: "https://example.test/tileset.json",
             adapter,
             maxScreenSpaceError: 10,
-            cache: { maxContentEntries: 1, unusedFrameRetention: 1000 },
+            cache: { maxContentEntries: 1, unusedRetentionMilliseconds: 60_000 },
+            // Immediate coarsening and no preloading: the scenario follows each frame.
+            coarseningDelayFrames: 0,
+            preloadSiblings: false,
         });
 
         await runtime.update({ multiplier: 0 });
@@ -343,6 +349,9 @@ describe("TileRuntime", () => {
             uri: "https://example.test/tileset.json",
             adapter,
             maxScreenSpaceError: 10,
+            // Immediate coarsening and no preloading: the scenario follows each frame.
+            coarseningDelayFrames: 0,
+            preloadSiblings: false,
         });
 
         await runtime.update({ multiplier: 1 });
@@ -564,7 +573,10 @@ describe("TileRuntime", () => {
             uri: "https://example.test/tileset.json",
             adapter,
             maxScreenSpaceError: 10,
-            cache: { maxContentEntries: 2, unusedFrameRetention: 1000 },
+            cache: { maxContentEntries: 2, unusedRetentionMilliseconds: 60_000 },
+            // Immediate coarsening and no preloading: the scenario follows each frame.
+            coarseningDelayFrames: 0,
+            preloadSiblings: false,
         });
         const publications: number[] = [];
         runtime.instrumentation.subscribe((snapshot) => publications.push(snapshot.frame));
@@ -596,6 +608,257 @@ describe("TileRuntime", () => {
         await runtime.update({ multiplier: 0 });
         expect(runtime.instrumentation.snapshot().metrics.frame?.count).toBe((metricsBeforeDisable ?? 0) + 1);
         expect(publications.length).toBeGreaterThan(publicationsBeforeDisable);
+        await runtime.dispose();
+    });
+});
+
+describe("TileRuntime navigation defaults", () => {
+    /** Root refined into two children: child A in the view, child B outside it until the camera turns (multiplier -1). */
+    function rotationScenario() {
+        const loads: string[] = [];
+        const childA = { ...tile("child-a.glb"), boundingVolume: { sphere: [1, 0, 0, 10] as [number, number, number, number] } };
+        const childB = { ...tile("child-b.glb"), boundingVolume: { sphere: [-1, 0, 0, 10] as [number, number, number, number] } };
+        const tileset: ITileset = {
+            asset: { version: "1.1" },
+            geometricError: 100,
+            root: { ...tile("root.glb", 100), refine: "REPLACE", children: [childA, childB] },
+        };
+        const adapter: IRuntimeAdapter<IFakeCamera, IRotationSpatial, IFakeHandle, string> = {
+            tilesets: tilesetLoader(tileset),
+            spatial: new RotationSpatialMetric(),
+            content: {
+                load: async (context) => {
+                    loads.push(context.uri);
+                    return { kind: "renderable", handle: { uri: context.uri } };
+                },
+                attach: () => undefined,
+                detach: () => undefined,
+            },
+        };
+        return { loads, adapter };
+    }
+
+    it("preloads the children outside the view by default, so that turning the camera keeps the refinement", async () => {
+        const { loads, adapter } = rotationScenario();
+        const runtime = new TileRuntime({ id: "defaults", uri: "https://example.test/tileset.json", adapter, maxScreenSpaceError: 10 });
+
+        await runtime.update({ multiplier: 1 });
+        await runtime.whenIdle();
+        expect(loads).toContain("https://example.test/child-b.glb");
+
+        await runtime.update({ multiplier: -1 });
+        expect(runtime.selectedTiles.map((node) => node.id).sort()).toEqual(["defaults/root/0", "defaults/root/1"]);
+        await runtime.dispose();
+    });
+
+    it("loads only the children in the view when preloading is turned off", async () => {
+        const { loads, adapter } = rotationScenario();
+        const runtime = new TileRuntime({
+            id: "off",
+            uri: "https://example.test/tileset.json",
+            adapter,
+            maxScreenSpaceError: 10,
+            preloadSiblings: false,
+        });
+
+        await runtime.update({ multiplier: 1 });
+        await runtime.whenIdle();
+        expect(loads).not.toContain("https://example.test/child-b.glb");
+        await runtime.dispose();
+    });
+
+    it("keeps a refinement for 20 frames by default after nothing requires it", async () => {
+        const { adapter } = rotationScenario();
+        const runtime = new TileRuntime({ id: "delay", uri: "https://example.test/tileset.json", adapter, maxScreenSpaceError: 10 });
+
+        await runtime.update({ multiplier: 1 });
+        await runtime.whenIdle();
+        // The screen-space error no longer requires the refinement.
+        for (let frame = 0; frame < 19; frame++) await runtime.update({ multiplier: 0 });
+        expect(runtime.selectedTiles.map((node) => node.id)).not.toContain("delay/root");
+        for (let frame = 0; frame < 3; frame++) await runtime.update({ multiplier: 0 });
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["delay/root"]);
+        await runtime.dispose();
+    });
+});
+
+describe("TileRuntime cache retention", () => {
+    /** Root refined into one child; the root content is detached and cached while the child is shown. */
+    function retentionScenario(cache: NonNullable<ConstructorParameters<typeof TileRuntime>[0]["cache"]>, clock: () => number) {
+        const disposals: string[] = [];
+        const tileset: ITileset = {
+            asset: { version: "1.1" },
+            geometricError: 100,
+            root: { ...tile("root.glb", 100), refine: "REPLACE", children: [tile("child.glb")] },
+        };
+        const adapter: IRuntimeAdapter<IFakeCamera, IFakeSpatial, IFakeHandle, string> = {
+            tilesets: tilesetLoader(tileset),
+            spatial: new FakeSpatialMetric(),
+            content: {
+                load: async (context) => ({ kind: "renderable", handle: { uri: context.uri }, cacheKey: context.uri }),
+                attach: () => undefined,
+                detach: () => undefined,
+                dispose: (context) => {
+                    disposals.push(context.uri);
+                },
+            },
+        };
+        const runtime = new TileRuntime({
+            id: "retention",
+            uri: "https://example.test/tileset.json",
+            adapter,
+            maxScreenSpaceError: 10,
+            cache,
+            clock,
+            coarseningDelayFrames: 0,
+        });
+        return { runtime, disposals };
+    }
+
+    it("keeps an inactive content for the retention time, however many frames run", async () => {
+        let now = 0;
+        const { runtime, disposals } = retentionScenario({ unusedRetentionMilliseconds: 60_000 }, () => now);
+        await runtime.update({ multiplier: 0 });
+        await runtime.whenIdle();
+        await runtime.update({ multiplier: 1 });
+        await runtime.whenIdle();
+
+        // 500 frames within 50 seconds: the root stays cached.
+        for (let frame = 0; frame < 500; frame++) {
+            now += 100;
+            await runtime.update({ multiplier: 1 });
+        }
+        expect(disposals).not.toContain("https://example.test/root.glb");
+
+        // Past the retention time, the next frame evicts it.
+        now += 20_000;
+        await runtime.update({ multiplier: 1 });
+        expect(disposals).toContain("https://example.test/root.glb");
+        await runtime.dispose();
+    });
+
+    it("still applies a deprecated frame count when an application sets one", async () => {
+        const { runtime, disposals } = retentionScenario({ unusedFrameRetention: 3 }, () => 0);
+        await runtime.update({ multiplier: 0 });
+        await runtime.whenIdle();
+        await runtime.update({ multiplier: 1 });
+        await runtime.whenIdle();
+
+        for (let frame = 0; frame < 5; frame++) await runtime.update({ multiplier: 1 });
+        expect(disposals).toContain("https://example.test/root.glb");
+        await runtime.dispose();
+    });
+});
+
+describe("TileRuntime zoom out", () => {
+    interface IZoomCamera {
+        multiplier: number;
+        /** Hides the western branch, as a narrower view would. */
+        narrow: boolean;
+    }
+
+    interface IZoomSpatial {
+        geometricError: number;
+        west: boolean;
+    }
+
+    class ZoomSpatialMetric implements ISpatialMetric<IZoomCamera, IZoomSpatial> {
+        public derive(context: ISpatialDerivationContext<IZoomSpatial>): IZoomSpatial {
+            const west = (context.tile.boundingVolume.sphere?.[0] ?? 0) < 0 || context.parent?.west === true;
+            return { geometricError: context.tile.geometricError, west };
+        }
+
+        public isVisible(spatial: IZoomSpatial, camera: IZoomCamera): boolean {
+            return !(camera.narrow && spatial.west);
+        }
+
+        public screenSpaceError(context: { camera: IZoomCamera; spatial: IZoomSpatial }): number {
+            return context.spatial.geometricError * context.camera.multiplier;
+        }
+    }
+
+    /**
+     * root > a > [east, west], each with one finer child. Zoomed in on the east branch with a narrow view, then zoomed
+     * out: the view widens to the west branch and the wanted level is that of east and west.
+     */
+    function zoomOutScenario(preloadSiblings: boolean) {
+        const westLoad = deferred<ContentLoadResult<IFakeHandle>>();
+        const sphere = (x: number) => ({ sphere: [x, 0, 0, 10] as [number, number, number, number] });
+        const east = {
+            ...tile("east.glb", 10),
+            boundingVolume: sphere(1),
+            refine: "REPLACE" as const,
+            children: [{ ...tile("east-child.glb", 1), boundingVolume: sphere(1) }] as [ITile],
+        };
+        const west = {
+            ...tile("west.glb", 10),
+            boundingVolume: sphere(-1),
+            refine: "REPLACE" as const,
+            children: [{ ...tile("west-child.glb", 1), boundingVolume: sphere(-1) }] as [ITile],
+        };
+        const tileset: ITileset = {
+            asset: { version: "1.1" },
+            geometricError: 1000,
+            root: {
+                ...tile("root.glb", 1000),
+                refine: "REPLACE",
+                children: [{ ...tile("a.glb", 100), refine: "REPLACE", children: [east, west] }],
+            },
+        };
+        const adapter: IRuntimeAdapter<IZoomCamera, IZoomSpatial, IFakeHandle, string> = {
+            tilesets: tilesetLoader(tileset),
+            spatial: new ZoomSpatialMetric(),
+            content: {
+                load: async (context) => {
+                    // Without preloading, the west tile only loads once the view widens, and waits on `westLoad`.
+                    if (!preloadSiblings && context.uri.endsWith("/west.glb")) return westLoad.promise;
+                    return { kind: "renderable", handle: { uri: context.uri } };
+                },
+                attach: () => undefined,
+                detach: () => undefined,
+            },
+        };
+        const runtime = new TileRuntime({
+            id: "zoom",
+            uri: "https://example.test/tileset.json",
+            adapter,
+            maxScreenSpaceError: 10,
+            preloadSiblings,
+            coarseningDelayFrames: 0,
+        });
+        return { runtime, westLoad };
+    }
+
+    async function zoomInThenOut(runtime: TileRuntime<IZoomCamera, IZoomSpatial, IFakeHandle, string>): Promise<void> {
+        // Zoomed in with a narrow view: root 2000, a 200 and east 20 refine down to the east child.
+        for (let frame = 0; frame < 6; frame++) {
+            await runtime.update({ multiplier: 2, narrow: true });
+            await runtime.whenIdle();
+        }
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["zoom/root/0/0/0"]);
+        // Zoomed out with a wide view: a 50 refines, east and west 5 are the wanted level.
+        await runtime.update({ multiplier: 0.5, narrow: false });
+    }
+
+    it("shows the wanted level at once when the children entering the view were preloaded", async () => {
+        const { runtime } = zoomOutScenario(true);
+        await zoomInThenOut(runtime);
+
+        expect(runtime.selectedTiles.map((node) => node.id).sort()).toEqual(["zoom/root/0/0", "zoom/root/0/1"]);
+        await runtime.dispose();
+    });
+
+    it("falls back to the ready ancestor, dropping the finer tiles, when a child entering the view was not preloaded", async () => {
+        const { runtime, westLoad } = zoomOutScenario(false);
+        await zoomInThenOut(runtime);
+
+        // The west tile was never loaded: a, coarser than the wanted level, covers the view while it loads.
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["zoom/root/0"]);
+
+        westLoad.resolve({ kind: "renderable", handle: { uri: "https://example.test/west.glb" } });
+        await runtime.whenIdle();
+        await runtime.update({ multiplier: 0.5, narrow: false });
+        expect(runtime.selectedTiles.map((node) => node.id).sort()).toEqual(["zoom/root/0/0", "zoom/root/0/1"]);
         await runtime.dispose();
     });
 });

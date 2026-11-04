@@ -44,7 +44,15 @@ function createRuntime(activate: Activate, maxConcurrentLoads: number) {
         activation: { activate, deactivate: () => undefined },
         presentation: { present: () => undefined, hide: () => undefined, release: () => undefined },
     };
-    return new TileRuntime({ id: "cancellation", uri: "memory://tileset.json", adapter, maxScreenSpaceError: 1, maxConcurrentLoads });
+    return new TileRuntime({
+        id: "cancellation",
+        uri: "memory://tileset.json",
+        adapter,
+        maxScreenSpaceError: 1,
+        maxConcurrentLoads,
+        preloadSiblings: false,
+        coarseningDelayFrames: 0,
+    });
 }
 
 async function frame(runtime: TileRuntime<ICamera, ISpatial, IHandle, never>, hidden: readonly string[]): Promise<void> {
