@@ -1,6 +1,15 @@
-import { childTileAddresses, parentTileAddress, TileNeighbor, tileNeighborAddress, type ITileAddress, type TileEdgeNeighbor } from "@spacexr/tiles";
+import {
+    childTileAddresses,
+    parentTileAddress,
+    TILE_CORNER_NEIGHBORS,
+    TileNeighbor,
+    tileNeighborAddress,
+    type ITileAddress,
+    type TileCornerNeighbor,
+    type TileEdgeNeighbor,
+} from "@spacexr/tiles";
 
-/** Edges of a drape instance, as bits of {@link IDrapeInstance.coarserEdges}. */
+/** Edges of a drape instance, as bits of {@link IDrapeInstance.coarserEdges} and {@link IDrapeInstance.finerEdges}. */
 export const DrapeInstanceEdge = {
     N: 1,
     E: 2,
@@ -8,18 +17,27 @@ export const DrapeInstanceEdge = {
     W: 8,
 } as const;
 
+/** Four terrain tiles, one per edge or per corner of an instance. */
+export type DrapeInstanceTerrains = readonly [ITileAddress, ITileAddress, ITileAddress, ITileAddress];
+
 /** One instance of the shared grid: a tile of the instance cut. */
 export interface IDrapeInstance {
     /** Tile drawn by the instance. */
     address: ITileAddress;
     /** Presented terrain tile containing it, whose DEM tile gives its elevation. */
     terrain: ITileAddress;
-    /**
-     * Edges whose neighbour instance is one level coarser, a combination of {@link DrapeInstanceEdge} bits: the
-     * instance draws the predefined grid variant whose edges drop their odd vertices there, so that both sides draw
-     * the same segments.
-     */
+    /** Edges whose neighbour instance is one level coarser, a combination of {@link DrapeInstanceEdge} bits. */
     coarserEdges: number;
+    /** Edges whose neighbour instances are one level finer, a combination of {@link DrapeInstanceEdge} bits. */
+    finerEdges: number;
+    /**
+     * Terrain tile whose DEM gives the heights along each edge, in N, E, S, W order: the coarsest terrain tile among
+     * the instance and the instances across the edge, the instance's own on ties. Both sides of an edge then read the
+     * same heights.
+     */
+    edgeTerrain: DrapeInstanceTerrains;
+    /** Terrain tile whose DEM gives the height of each corner, in NW, NE, SE, SW order, chosen like `edgeTerrain`. */
+    cornerTerrain: DrapeInstanceTerrains;
 }
 
 export interface IDrapeInstanceCutOptions {
@@ -50,8 +68,35 @@ const EDGES: readonly [TileEdgeNeighbor, number][] = [
     [TileNeighbor.W, DrapeInstanceEdge.W],
 ];
 
+/** Column and row offsets of each corner point from the north-west corner of the tile. */
+const CORNER_POINTS: Readonly<Record<TileCornerNeighbor, readonly [number, number]>> = {
+    [TileNeighbor.NW]: [0, 0],
+    [TileNeighbor.NE]: [1, 0],
+    [TileNeighbor.SE]: [1, 1],
+    [TileNeighbor.SW]: [0, 1],
+};
+
+/** The four tiles of a level meeting at a point, as offsets from the point, with the index of their child at the point. */
+const TILES_AROUND_POINT: readonly (readonly [number, number, number])[] = [
+    [-1, -1, 3],
+    [0, -1, 2],
+    [-1, 0, 1],
+    [0, 0, 0],
+];
+
 function key(address: ITileAddress): string {
     return `${address.lod}/${address.x}/${address.y}`;
+}
+
+function createInstance(address: ITileAddress, terrain: ITileAddress): IDrapeInstance {
+    return {
+        address,
+        terrain,
+        coarserEdges: 0,
+        finerEdges: 0,
+        edgeTerrain: [terrain, terrain, terrain, terrain],
+        cornerTerrain: [terrain, terrain, terrain, terrain],
+    };
 }
 
 /**
@@ -61,7 +106,9 @@ function key(address: ITileAddress): string {
  * Inside each presented terrain tile, the imagery tiles of the cut below it become instances, completed with the
  * tiles needed to cover the terrain tile without overlap; a terrain tile without finer imagery is one instance. A
  * level below a terrain tile stays for `holdMilliseconds` after the imagery cut stopped reaching it. Leaves whose edge
- * neighbour is subdivided two levels deeper or more are split until the cut is balanced.
+ * neighbour is subdivided two levels deeper or more are split until the cut is balanced. Each instance then knows
+ * the level of its neighbours across each edge and the terrain tile whose DEM gives the heights of each edge and
+ * corner, so that neighbouring instances join without cracks.
  */
 export class DrapeInstanceCut {
     public readonly maxDepth: number;
@@ -98,11 +145,11 @@ export class DrapeInstanceCut {
                 for (const child of childTileAddresses(address)) split(child, terrain);
                 return;
             }
-            leaves.set(key(address), { address, terrain, coarserEdges: 0 });
+            leaves.set(key(address), createInstance(address, terrain));
         };
         for (const terrain of terrainCut) split({ ...terrain }, { ...terrain });
-        this.balance(leaves);
-        for (const leaf of leaves.values()) leaf.coarserEdges = this.coarserEdges(leaf.address, leaves);
+        const inner = this.balance(leaves);
+        for (const leaf of leaves.values()) this.connect(leaf, leaves, inner);
         return [...leaves.values()];
     }
 
@@ -125,9 +172,12 @@ export class DrapeInstanceCut {
         }
     }
 
-    /** Splits the leaves whose edge neighbour is subdivided two levels deeper or more, until none is. */
-    private balance(leaves: Map<string, IDrapeInstance>): void {
-        // Strict ancestors of the leaves: the tiles subdivided below them.
+    /**
+     * Splits the leaves whose edge neighbour is subdivided two levels deeper or more, until none is.
+     *
+     * @returns The strict ancestors of the leaves.
+     */
+    private balance(leaves: Map<string, IDrapeInstance>): Set<string> {
         const inner = new Set<string>();
         const addAncestors = (address: ITileAddress): void => {
             for (let ancestor = parentTileAddress(address); ancestor; ancestor = parentTileAddress(ancestor)) {
@@ -152,33 +202,85 @@ export class DrapeInstanceCut {
             leaves.delete(key(leaf.address));
             inner.add(key(leaf.address));
             for (const child of childTileAddresses(leaf.address)) {
-                const instance = { address: child, terrain: leaf.terrain, coarserEdges: 0 };
+                const instance = createInstance(child, leaf.terrain);
                 leaves.set(key(child), instance);
                 queue.push(instance);
             }
             // Coarser neighbours may now be two levels from the new children.
             for (const [edge] of EDGES) {
                 const neighbor = tileNeighborAddress(leaf.address, edge, { wrapX: this.wrapX });
-                for (let tile = neighbor; tile; tile = parentTileAddress(tile)) {
-                    const coarser = leaves.get(key(tile));
-                    if (coarser) {
-                        queue.push(coarser);
-                        break;
-                    }
-                }
+                const coarser = neighbor && this.leafContaining(neighbor, leaves);
+                if (coarser) queue.push(coarser);
             }
         }
+        return inner;
     }
 
-    /** Edges of a leaf whose neighbour leaf is one level coarser. */
-    private coarserEdges(address: ITileAddress, leaves: ReadonlyMap<string, IDrapeInstance>): number {
-        let edges = 0;
+    /** Records the levels of the neighbours of a leaf and the terrain tiles giving the heights of its edges and corners. */
+    private connect(leaf: IDrapeInstance, leaves: ReadonlyMap<string, IDrapeInstance>, inner: ReadonlySet<string>): void {
+        const { address } = leaf;
+        const coarsest = (touching: readonly IDrapeInstance[]): ITileAddress =>
+            touching.reduce((terrain, other) => (other.terrain.lod < terrain.lod ? other.terrain : terrain), leaf.terrain);
+        const edgeTerrain: ITileAddress[] = [];
         for (const [edge, bit] of EDGES) {
-            const neighbor = tileNeighborAddress(address, edge, { wrapX: this.wrapX });
-            if (!neighbor || leaves.has(key(neighbor))) continue;
-            const parent = parentTileAddress(neighbor);
-            if (parent && leaves.has(key(parent))) edges |= bit;
+            const touching = this.acrossEdge(address, edge, leaves, inner);
+            if (touching.some((other) => other.address.lod < address.lod)) leaf.coarserEdges |= bit;
+            if (touching.some((other) => other.address.lod > address.lod)) leaf.finerEdges |= bit;
+            edgeTerrain.push(coarsest(touching));
         }
-        return edges;
+        leaf.edgeTerrain = edgeTerrain as unknown as DrapeInstanceTerrains;
+        leaf.cornerTerrain = TILE_CORNER_NEIGHBORS.map((corner) => coarsest(this.atCorner(address, corner, leaves, inner))) as unknown as DrapeInstanceTerrains;
+    }
+
+    /** Leaves across an edge of a tile: the neighbour, a coarser leaf containing it, or the finer leaves along the edge. */
+    private acrossEdge(address: ITileAddress, edge: TileEdgeNeighbor, leaves: ReadonlyMap<string, IDrapeInstance>, inner: ReadonlySet<string>): IDrapeInstance[] {
+        const neighbor = tileNeighborAddress(address, edge, { wrapX: this.wrapX });
+        if (!neighbor) return [];
+        const coarser = this.leafContaining(neighbor, leaves);
+        if (coarser) return [coarser];
+        const found: IDrapeInstance[] = [];
+        const descend = (tile: ITileAddress): void => {
+            const leaf = leaves.get(key(tile));
+            if (leaf) found.push(leaf);
+            else if (inner.has(key(tile))) for (const index of CHILDREN_FACING[edge]) descend(childTileAddresses(tile)[index]!);
+        };
+        descend(neighbor);
+        return found;
+    }
+
+    /** Leaves touching a corner point of a tile, the tile itself included, at any level. */
+    private atCorner(address: ITileAddress, corner: TileCornerNeighbor, leaves: ReadonlyMap<string, IDrapeInstance>, inner: ReadonlySet<string>): IDrapeInstance[] {
+        const [cornerX, cornerY] = CORNER_POINTS[corner];
+        const count = 2 ** address.lod;
+        const found: IDrapeInstance[] = [];
+        for (const [dx, dy, childIndex] of TILES_AROUND_POINT) {
+            const row = address.y + cornerY + dy;
+            let column = address.x + cornerX + dx;
+            if (row < 0 || row >= count) continue;
+            if (column < 0 || column >= count) {
+                if (!this.wrapX) continue;
+                column = ((column % count) + count) % count;
+            }
+            let tile: ITileAddress = { lod: address.lod, x: column, y: row };
+            const coarser = this.leafContaining(tile, leaves);
+            if (coarser) {
+                found.push(coarser);
+                continue;
+            }
+            // Descend towards the point: the child of each tile that has the point as a corner.
+            while (inner.has(key(tile))) tile = childTileAddresses(tile)[childIndex]!;
+            const leaf = leaves.get(key(tile));
+            if (leaf) found.push(leaf);
+        }
+        return found;
+    }
+
+    /** The leaf equal to a tile or containing it, if any. */
+    private leafContaining(address: ITileAddress, leaves: ReadonlyMap<string, IDrapeInstance>): IDrapeInstance | undefined {
+        for (let tile: ITileAddress | undefined = address; tile; tile = parentTileAddress(tile)) {
+            const leaf = leaves.get(key(tile));
+            if (leaf) return leaf;
+        }
+        return undefined;
     }
 }
