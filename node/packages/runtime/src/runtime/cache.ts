@@ -12,6 +12,17 @@ export interface IRuntimeCacheOptions {
     maxContentGpuBytes?: number;
     maxSubtreeEntries?: number;
     maxSubtreeBytes?: number;
+    /**
+     * Time an inactive resource stays cached, in milliseconds: a renderable, a subtree payload or a materialized
+     * implicit branch unused for longer is evicted at the next frame. Defaults to 60 000.
+     */
+    unusedRetentionMilliseconds?: number;
+    /**
+     * Number of runtime frames an inactive resource stays cached, in place of `unusedRetentionMilliseconds`.
+     *
+     * @deprecated Runtime frames only run while the camera moves or loads settle, so a frame count is a short time
+     * while the camera turns and an endless one while it rests. Use `unusedRetentionMilliseconds`.
+     */
     unusedFrameRetention?: number;
 }
 
@@ -23,7 +34,9 @@ export interface IResolvedRuntimeCacheOptions {
     maxContentGpuBytes: number;
     maxSubtreeEntries: number;
     maxSubtreeBytes: number;
-    unusedFrameRetention: number;
+    unusedRetentionMilliseconds: number;
+    /** Deprecated frame count, applied instead of the time when an application sets it. */
+    unusedFrameRetention?: number;
 }
 
 export type RuntimeCacheResourceKind = "content" | "subtree" | "implicit-branch";
@@ -53,12 +66,13 @@ export interface IRuntimeCacheCounters {
 export const DEFAULT_RUNTIME_CACHE_OPTIONS: IResolvedRuntimeCacheOptions = {
     enabled: true,
     maxMaterializedTiles: 4096,
-    maxContentEntries: 512,
+    // The byte budgets bound the memory; entries only bound the bookkeeping of many small contents.
+    maxContentEntries: 4096,
     maxContentCpuBytes: 512 * 1024 * 1024,
     maxContentGpuBytes: 1024 * 1024 * 1024,
     maxSubtreeEntries: 128,
     maxSubtreeBytes: 64 * 1024 * 1024,
-    unusedFrameRetention: 120,
+    unusedRetentionMilliseconds: 60_000,
 };
 
 function resolveBudget(value: number | undefined, fallback: number): number {
@@ -77,6 +91,12 @@ export function resolveRuntimeCacheOptions(options: IRuntimeCacheOptions | false
         maxContentGpuBytes: resolveBudget(options?.maxContentGpuBytes, DEFAULT_RUNTIME_CACHE_OPTIONS.maxContentGpuBytes),
         maxSubtreeEntries: resolveBudget(options?.maxSubtreeEntries, DEFAULT_RUNTIME_CACHE_OPTIONS.maxSubtreeEntries),
         maxSubtreeBytes: resolveBudget(options?.maxSubtreeBytes, DEFAULT_RUNTIME_CACHE_OPTIONS.maxSubtreeBytes),
-        unusedFrameRetention: resolveBudget(options?.unusedFrameRetention, DEFAULT_RUNTIME_CACHE_OPTIONS.unusedFrameRetention),
+        unusedRetentionMilliseconds: resolveBudget(
+            options?.unusedRetentionMilliseconds,
+            DEFAULT_RUNTIME_CACHE_OPTIONS.unusedRetentionMilliseconds,
+        ),
+        ...(options?.unusedFrameRetention === undefined
+            ? {}
+            : { unusedFrameRetention: resolveBudget(options.unusedFrameRetention, Number.POSITIVE_INFINITY) }),
     };
 }
