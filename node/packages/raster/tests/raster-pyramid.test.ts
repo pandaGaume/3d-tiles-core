@@ -65,6 +65,19 @@ describe("RasterPyramid", () => {
         expect(changes.some((changed) => changed[0] === "1/0" && changed.includes("0/0"))).toBe(true);
     });
 
+    it("reports stitched grids to listeners added after creation, until they are removed", async () => {
+        const pyramid = new RasterPyramid({ load, maxLOD: 1 });
+        const changes: string[] = [];
+        const stop = pyramid.observeStitched((changed) => changes.push(...changed.map(({ x, y }) => `${x}/${y}`)));
+        await pyramid.load({ lod: 1, x: 0, y: 0 });
+        expect(changes).toContain("0/0");
+
+        stop();
+        changes.length = 0;
+        await pyramid.load({ lod: 1, x: 0, y: 1 });
+        expect(changes).toEqual([]);
+    });
+
     it("returns undefined where the pyramid has no raster", async () => {
         const pyramid = new RasterPyramid({ load: () => Promise.resolve(undefined), maxLOD: 1 });
         expect(await pyramid.load({ lod: 0, x: 0, y: 0 })).toBeUndefined();

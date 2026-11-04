@@ -57,6 +57,7 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
     private readonly stitched: StitchedRasterGrids<TGrid>;
     private readonly wrapX: boolean;
     private readonly onStitched: ((changed: readonly ITileAddress[]) => void) | undefined;
+    private readonly stitchedListeners = new Set<(changed: readonly ITileAddress[]) => void>();
 
     public constructor(options: IRasterPyramidOptions<TGrid>) {
         const { create, onStitched, generation, ...pyramid } = options;
@@ -73,10 +74,7 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
             maxLOD: generation?.maxLOD ?? pyramid.maxLOD,
             load: (address) => (address.lod <= this.sourceMaxLOD ? pyramid.load(address) : this.generate(address, interpolation)),
             prefetch: [TileNeighbor.E, TileNeighbor.S, TileNeighbor.SE],
-            onLoad: (address, grid) => {
-                const changed = this.stitched.add(address, grid);
-                onStitched?.(changed);
-            },
+            onLoad: (address, grid) => this.notifyStitched(this.stitched.add(address, grid)),
             onEvict: (address) => this.stitched.delete(address),
         });
     }
@@ -110,6 +108,16 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
         this.tiles.release(address);
     }
 
+    /**
+     * Calls a listener whenever stitched grids change, like `onStitched`, for renderers created after the pyramid.
+     *
+     * @returns A function removing the listener.
+     */
+    public observeStitched(listener: (changed: readonly ITileAddress[]) => void): () => void {
+        this.stitchedListeners.add(listener);
+        return () => this.stitchedListeners.delete(listener);
+    }
+
     /** Stitched grid of a loaded raster tile, without loading it. */
     public stitchedGrid(address: ITileAddress): TGrid | undefined {
         return this.stitched.get(address);
@@ -126,7 +134,7 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
         if (!region) return undefined;
         const { ancestor, west, north, size } = region;
         // Evicted again while its neighbours loaded: stitch it once more.
-        if (!this.stitched.has(ancestor)) this.onStitched?.(this.stitched.add(ancestor, region.content));
+        if (!this.stitched.has(ancestor)) this.notifyStitched(this.stitched.add(ancestor, region.content));
         const grid = this.stitched.get(ancestor)!;
         return {
             address: region.address,
@@ -161,6 +169,11 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
             }
         }
         return Number.NaN;
+    }
+
+    private notifyStitched(changed: readonly ITileAddress[]): void {
+        this.onStitched?.(changed);
+        for (const listener of this.stitchedListeners) listener(changed);
     }
 
     /** Generates a tile below the source levels from its parent and the neighbours of its parent. */

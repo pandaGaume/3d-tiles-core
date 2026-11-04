@@ -47,6 +47,16 @@ const value = imagery.sampleAt(0.5, 0.25, 19, 0); // point of the pyramid, x eas
 
 Pass `create` to build another grid type from each stitched raster, as `@spacexr/dem` does to compute height ranges.
 
+## Draping
+
+`drapeCells` and `drapeDepth` drape a terrain tile with `4^k` raster pages, one per cell, for the mesh draping engine. `DrapeInstanceCut` computes the instances of the GPU instancing engine: the finer of the terrain and imagery cuts at each place, balanced so that edges join instances at most one level apart, with the edges where each instance meets a coarser one. See [Raster draping](https://github.com/pandaGaume/3d-tiles-core/blob/main/docs/draping.md).
+
+```ts
+const cut = new DrapeInstanceCut({ holdMilliseconds: 500 });
+const instances = cut.update(terrainCut, imageryCut, performance.now());
+// Compute again at cut.expiresAt, when a level held after the imagery coarsened leaves the cut.
+```
+
 ## Image decoding
 
 `IImageDecoder` turns PNG, WebP or JPEG bytes into an `IRgbaImage`, a raster of four 8-bit channels. `BrowserImageDecoder` uses `createImageBitmap` and `OffscreenCanvas`, which are available in workers, and disables colour conversion and alpha premultiplication, which would otherwise alter values encoded in the pixels. On Node.js, supply an image decoder based on a PNG library.

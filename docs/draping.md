@@ -9,9 +9,9 @@ A renderer binds the pages of one pyramid to the tiles of the other. Two engines
 | Engine         | Render unit  | Bound pages                                                              | Geometry                                   |
 | -------------- | ------------ | ------------------------------------------------------------------------ | ------------------------------------------ |
 | Mesh draping   | terrain tile | `4^k` imagery pages, one per cell, `k` set per tile by the imagery cut   | CPU meshes, as built today                 |
-| GPU instancing | imagery tile | one imagery page, and the elevation page of the terrain tile containing it | one shared grid instanced, displaced on the GPU |
+| GPU instancing | leaf of the instance cut, the finer of the two cuts | one imagery page, and the elevation page of the terrain tile containing it | one shared grid instanced, displaced on the GPU |
 
-Both engines remain available; the mesh draping engine is implemented first.
+Both engines remain available behind the same runtimes, pages and residency index; a renderer selects one.
 
 ## Imagery tree
 
@@ -41,5 +41,29 @@ The pages available to the renderer form a residency index. The cover of a tile 
 
 ## GPU instancing
 
-- An imagery tile at level `l` is drawn as an instance of a shared grid, with the terrain junction variant of its edges. Its elevation is the cover of the imagery tile among the resident elevation pages, so its vertices sample the elevation page at `(west + u * size, north + v * size)`.
-- Elevation pages store heights relative to the minimum of their tile when they use half floats, whose spacing reaches 4 m between 4096 and 8192 m.
+The mesh draping engine builds a mesh per terrain tile on the CPU: DEM sampling, junctions, normals and drape tables. The GPU instancing engine leaves the CPU only the cut, a few values per instance and the uploads of new pages; one draw call renders the terrain.
+
+### Instance cut
+
+- The instances are the leaves of the union of the terrain cut and the imagery cut. Inside each presented terrain tile, the imagery tiles of the cut below it are instances, completed with the tiles needed to cover the terrain tile without overlap; a terrain tile without finer imagery is one instance. An instance is never coarser than its terrain tile.
+- A level below a terrain tile stays in the instance cut for a hold time after the imagery cut stopped reaching it, 500 ms by default, for the reason given for the drape depth.
+- The leaves are balanced across edges: a leaf whose edge neighbour is subdivided two levels deeper or more is split into its four children, until every edge joins leaves at most one level apart. Columns wrap around the antimeridian. Corners are not balanced: corner vertices exist at every level.
+- An edge whose neighbour leaf is one level coarser is a junction: the finer instance draws it with half as many segments, the `Coarser` variant of [terrain grids](grid.md), so both sides draw the same segments.
+
+### Geometry
+
+- Instances draw predefined grids: the normalized topologies of [terrain grids](grid.md), `n x n` cells over `u` west to east and `v` north to south, one variant per combination of junction edges. Each variant is one mesh instanced once per instance using it, so the terrain costs one draw call per variant in use. Instances only carry the values that size and place their grid; positions and heights come from buffers.
+- Every grid has a skirt: each edge vertex repeated below the surface along the ellipsoid normal. Skirts hide the height differences between instances that read different DEM tiles.
+- In Web Mercator, every tile of level `l` and row `y` is the tile of column 0 rotated about the polar axis. The shape of `(l, y)` holds, per vertex, the position on the ellipsoid relative to the centre of the tile, in a frame rotated so that the centre longitude is 0, and the geodetic latitude. Shapes are computed in double precision once per `(l, y)` and stored as 32-bit floats, which only hold distances within a tile.
+- A vertex at height `h`, the DEM height times the vertical scale, is at `R(lambda_c) (s + h * n) + (c - e)`: `s` its shape position, `n` the ellipsoid normal at its latitude and at the longitude `(u - 0.5) * 360 / 2^l` degrees, `R(lambda_c)` the rotation by the longitude of the tile centre, `c` the ECEF position of the tile centre and `e` the camera position. The CPU computes `c - e` in double precision every frame, so that no float holds Earth-scale coordinates.
+- The normal of a vertex is the cross product of the central differences of the displaced positions of its neighbours in the grid, one-sided on the edges.
+
+### Elevation pages
+
+- The elevation of an instance is the DEM tile serving its terrain tile, at the source level or a generated one, and the area of the instance in that tile. A vertex samples its page at `(west + u * size, north + v * size)`.
+- A page is the stitched height grid of a DEM tile, `(w + 1) x (h + 1)` 32-bit float heights in point registration, read without filtering and interpolated bilinearly in the shader. Half floats would halve the memory, with heights stored relative to the minimum of their tile: their spacing reaches 4 m between 4096 and 8192 m.
+- A page is resident while a presented terrain tile uses it, and written again when a neighbour completes its stitched edges.
+
+### Imagery
+
+- Each instance samples one imagery page: the cover of its tile among the resident imagery pages, its own page or a coarser one while its own loads. An instance without any cover keeps the base colour of the terrain.

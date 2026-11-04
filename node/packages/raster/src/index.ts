@@ -1,3 +1,4 @@
+export * from "./drape-instances";
 export * from "./draping";
 export * from "./image";
 export * from "./raster-grid";
