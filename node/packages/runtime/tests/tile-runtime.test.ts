@@ -749,3 +749,116 @@ describe("TileRuntime cache retention", () => {
         await runtime.dispose();
     });
 });
+
+describe("TileRuntime zoom out", () => {
+    interface IZoomCamera {
+        multiplier: number;
+        /** Hides the western branch, as a narrower view would. */
+        narrow: boolean;
+    }
+
+    interface IZoomSpatial {
+        geometricError: number;
+        west: boolean;
+    }
+
+    class ZoomSpatialMetric implements ISpatialMetric<IZoomCamera, IZoomSpatial> {
+        public derive(context: ISpatialDerivationContext<IZoomSpatial>): IZoomSpatial {
+            const west = (context.tile.boundingVolume.sphere?.[0] ?? 0) < 0 || context.parent?.west === true;
+            return { geometricError: context.tile.geometricError, west };
+        }
+
+        public isVisible(spatial: IZoomSpatial, camera: IZoomCamera): boolean {
+            return !(camera.narrow && spatial.west);
+        }
+
+        public screenSpaceError(context: { camera: IZoomCamera; spatial: IZoomSpatial }): number {
+            return context.spatial.geometricError * context.camera.multiplier;
+        }
+    }
+
+    /**
+     * root > a > [east, west], each with one finer child. Zoomed in on the east branch with a narrow view, then zoomed
+     * out: the view widens to the west branch and the wanted level is that of east and west.
+     */
+    function zoomOutScenario(preloadSiblings: boolean) {
+        const westLoad = deferred<ContentLoadResult<IFakeHandle>>();
+        const sphere = (x: number) => ({ sphere: [x, 0, 0, 10] as [number, number, number, number] });
+        const east = {
+            ...tile("east.glb", 10),
+            boundingVolume: sphere(1),
+            refine: "REPLACE" as const,
+            children: [{ ...tile("east-child.glb", 1), boundingVolume: sphere(1) }] as [ITile],
+        };
+        const west = {
+            ...tile("west.glb", 10),
+            boundingVolume: sphere(-1),
+            refine: "REPLACE" as const,
+            children: [{ ...tile("west-child.glb", 1), boundingVolume: sphere(-1) }] as [ITile],
+        };
+        const tileset: ITileset = {
+            asset: { version: "1.1" },
+            geometricError: 1000,
+            root: {
+                ...tile("root.glb", 1000),
+                refine: "REPLACE",
+                children: [{ ...tile("a.glb", 100), refine: "REPLACE", children: [east, west] }],
+            },
+        };
+        const adapter: IRuntimeAdapter<IZoomCamera, IZoomSpatial, IFakeHandle, string> = {
+            tilesets: tilesetLoader(tileset),
+            spatial: new ZoomSpatialMetric(),
+            content: {
+                load: async (context) => {
+                    // Without preloading, the west tile only loads once the view widens, and waits on `westLoad`.
+                    if (!preloadSiblings && context.uri.endsWith("/west.glb")) return westLoad.promise;
+                    return { kind: "renderable", handle: { uri: context.uri } };
+                },
+                attach: () => undefined,
+                detach: () => undefined,
+            },
+        };
+        const runtime = new TileRuntime({
+            id: "zoom",
+            uri: "https://example.test/tileset.json",
+            adapter,
+            maxScreenSpaceError: 10,
+            preloadSiblings,
+            coarseningDelayFrames: 0,
+        });
+        return { runtime, westLoad };
+    }
+
+    async function zoomInThenOut(runtime: TileRuntime<IZoomCamera, IZoomSpatial, IFakeHandle, string>): Promise<void> {
+        // Zoomed in with a narrow view: root 2000, a 200 and east 20 refine down to the east child.
+        for (let frame = 0; frame < 6; frame++) {
+            await runtime.update({ multiplier: 2, narrow: true });
+            await runtime.whenIdle();
+        }
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["zoom/root/0/0/0"]);
+        // Zoomed out with a wide view: a 50 refines, east and west 5 are the wanted level.
+        await runtime.update({ multiplier: 0.5, narrow: false });
+    }
+
+    it("shows the wanted level at once when the children entering the view were preloaded", async () => {
+        const { runtime } = zoomOutScenario(true);
+        await zoomInThenOut(runtime);
+
+        expect(runtime.selectedTiles.map((node) => node.id).sort()).toEqual(["zoom/root/0/0", "zoom/root/0/1"]);
+        await runtime.dispose();
+    });
+
+    it("falls back to the ready ancestor, dropping the finer tiles, when a child entering the view was not preloaded", async () => {
+        const { runtime, westLoad } = zoomOutScenario(false);
+        await zoomInThenOut(runtime);
+
+        // The west tile was never loaded: a, coarser than the wanted level, covers the view while it loads.
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["zoom/root/0"]);
+
+        westLoad.resolve({ kind: "renderable", handle: { uri: "https://example.test/west.glb" } });
+        await runtime.whenIdle();
+        await runtime.update({ multiplier: 0.5, narrow: false });
+        expect(runtime.selectedTiles.map((node) => node.id).sort()).toEqual(["zoom/root/0/0", "zoom/root/0/1"]);
+        await runtime.dispose();
+    });
+});

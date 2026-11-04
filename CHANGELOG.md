@@ -43,7 +43,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 
-- Navigation defaults of `TileRuntime`, so that applications no longer need to tune them to turn the camera without reloading: `preloadSiblings` is enabled, `coarseningDelayFrames` is 20, the cache keeps inactive resources for `unusedRetentionMilliseconds`, 60 seconds, instead of 120 runtime frames, and keeps up to 4096 contents instead of 512 within its byte budgets. `unusedFrameRetention` is deprecated: runtime frames only run while the camera moves or loads settle, so a frame count was a few seconds while the camera turned. `clock` injects the time of the cache retention.
+- Navigation defaults of `TileRuntime`, so that applications no longer need to tune them to turn the camera without reloading: `preloadSiblings` is enabled, `coarseningDelayFrames` is 20, the cache keeps inactive resources for `unusedRetentionMilliseconds`, 60 seconds, instead of 120 runtime frames, and keeps up to 4096 contents instead of 512 within its byte budgets. `unusedFrameRetention` is deprecated: runtime frames only run while the camera moves or loads settle, so a frame count was a few seconds while the camera turned. Turning the camera or zooming out no longer drops the finer tiles displayed for a coarser ancestor while the children entering the view load: the children of refined tiles are preloaded. `clock` injects the time of the cache retention.
 
 - `@spacexr/geodesy` is installed from the npm registry instead of a vendored archive.
 - Conformance tests compare the exact set of diagnostic codes reported for each fixture.
