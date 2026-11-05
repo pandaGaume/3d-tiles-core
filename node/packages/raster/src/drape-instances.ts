@@ -1,10 +1,15 @@
 import {
     childTileAddresses,
+    flatTileTopology,
+    oppositeTileEdge,
     parentTileAddress,
+    TILE_CORNER_EDGES,
     TILE_CORNER_NEIGHBORS,
+    tileAddressKey as key,
     TileNeighbor,
-    tileNeighborAddress,
+    turnTileEdge,
     type ITileAddress,
+    type ITileTopology,
     type TileCornerNeighbor,
     type TileEdgeNeighbor,
 } from "@spacexr/tiles";
@@ -49,8 +54,10 @@ export interface IDrapeInstanceCutOptions {
      * flash coarser imagery. Defaults to 500.
      */
     holdMilliseconds?: number;
-    /** Wraps columns around the antimeridian. Defaults to true. */
+    /** Wraps columns around the antimeridian, when no `topology` is given. Defaults to true. */
     wrapX?: boolean;
+    /** How the tiles connect, for example across the faces of the cube index. Defaults to a pyramid with one root. */
+    topology?: ITileTopology;
 }
 
 /** Children of a neighbour that touch the tile, in `childTileAddresses` order NW, NE, SW, SE. */
@@ -68,24 +75,11 @@ const EDGES: readonly [TileEdgeNeighbor, number][] = [
     [TileNeighbor.W, DrapeInstanceEdge.W],
 ];
 
-/** Column and row offsets of each corner point from the north-west corner of the tile. */
-const CORNER_POINTS: Readonly<Record<TileCornerNeighbor, readonly [number, number]>> = {
-    [TileNeighbor.NW]: [0, 0],
-    [TileNeighbor.NE]: [1, 0],
-    [TileNeighbor.SE]: [1, 1],
-    [TileNeighbor.SW]: [0, 1],
-};
-
-/** The four tiles of a level meeting at a point, as offsets from the point, with the index of their child at the point. */
-const TILES_AROUND_POINT: readonly (readonly [number, number, number])[] = [
-    [-1, -1, 3],
-    [0, -1, 2],
-    [-1, 0, 1],
-    [0, 0, 0],
-];
-
-function key(address: ITileAddress): string {
-    return `${address.lod}/${address.x}/${address.y}`;
+/** Child of a tile in the direction of two edges, one north or south and one east or west, in any order. */
+function childToward(first: TileEdgeNeighbor, second: TileEdgeNeighbor): number {
+    const east = first === TileNeighbor.E || second === TileNeighbor.E;
+    const south = first === TileNeighbor.S || second === TileNeighbor.S;
+    return (east ? 1 : 0) + (south ? 2 : 0);
 }
 
 function createInstance(address: ITileAddress, terrain: ITileAddress): IDrapeInstance {
@@ -113,7 +107,7 @@ function createInstance(address: ITileAddress, terrain: ITileAddress): IDrapeIns
 export class DrapeInstanceCut {
     public readonly maxDepth: number;
     public readonly holdMilliseconds: number;
-    private readonly wrapX: boolean;
+    private readonly topology: ITileTopology;
     /** Tiles with imagery below them, by the last time the imagery cut reached below them. */
     private readonly subdivided = new Map<string, number>();
     private expiry: number | undefined;
@@ -122,7 +116,7 @@ export class DrapeInstanceCut {
         this.maxDepth = options.maxDepth ?? 6;
         if (!Number.isInteger(this.maxDepth) || this.maxDepth < 0) throw new RangeError("The maximum instance depth must be a non-negative integer.");
         this.holdMilliseconds = Math.max(0, options.holdMilliseconds ?? 500);
-        this.wrapX = options.wrapX ?? true;
+        this.topology = options.topology ?? flatTileTopology({ wrapX: options.wrapX ?? true });
     }
 
     /** Time at which a held level leaves the cut, so that the cut must be computed again; `undefined` when none is held. */
@@ -193,10 +187,10 @@ export class DrapeInstanceCut {
             const leaf = queue.pop()!;
             if (leaves.get(key(leaf.address)) !== leaf) continue;
             const deeper = EDGES.some(([edge]) => {
-                const neighbor = tileNeighborAddress(leaf.address, edge, { wrapX: this.wrapX });
+                const neighbor = this.topology.neighbor(leaf.address, edge);
                 if (!neighbor) return false;
-                const children = childTileAddresses(neighbor);
-                return CHILDREN_FACING[edge].some((index) => inner.has(key(children[index]!)));
+                const children = childTileAddresses(neighbor.address);
+                return CHILDREN_FACING[turnTileEdge(edge, neighbor.turns)].some((index) => inner.has(key(children[index]!)));
             });
             if (!deeper) continue;
             leaves.delete(key(leaf.address));
@@ -208,8 +202,8 @@ export class DrapeInstanceCut {
             }
             // Coarser neighbours may now be two levels from the new children.
             for (const [edge] of EDGES) {
-                const neighbor = tileNeighborAddress(leaf.address, edge, { wrapX: this.wrapX });
-                const coarser = neighbor && this.leafContaining(neighbor, leaves);
+                const neighbor = this.topology.neighbor(leaf.address, edge);
+                const coarser = neighbor && this.leafContaining(neighbor.address, leaves);
                 if (coarser) queue.push(coarser);
             }
         }
@@ -234,41 +228,45 @@ export class DrapeInstanceCut {
 
     /** Leaves across an edge of a tile: the neighbour, a coarser leaf containing it, or the finer leaves along the edge. */
     private acrossEdge(address: ITileAddress, edge: TileEdgeNeighbor, leaves: ReadonlyMap<string, IDrapeInstance>, inner: ReadonlySet<string>): IDrapeInstance[] {
-        const neighbor = tileNeighborAddress(address, edge, { wrapX: this.wrapX });
+        const neighbor = this.topology.neighbor(address, edge);
         if (!neighbor) return [];
-        const coarser = this.leafContaining(neighbor, leaves);
+        const coarser = this.leafContaining(neighbor.address, leaves);
         if (coarser) return [coarser];
+        // The direction of the edge, seen from the neighbour.
+        const facing = CHILDREN_FACING[turnTileEdge(edge, neighbor.turns)];
         const found: IDrapeInstance[] = [];
         const descend = (tile: ITileAddress): void => {
             const leaf = leaves.get(key(tile));
             if (leaf) found.push(leaf);
-            else if (inner.has(key(tile))) for (const index of CHILDREN_FACING[edge]) descend(childTileAddresses(tile)[index]!);
+            else if (inner.has(key(tile))) for (const index of facing) descend(childTileAddresses(tile)[index]!);
         };
-        descend(neighbor);
+        descend(neighbor.address);
         return found;
     }
 
-    /** Leaves touching a corner point of a tile, the tile itself included, at any level. */
+    /** Leaves touching a corner point of a tile, the tile itself included, at any level: 3 at the vertices of the cube. */
     private atCorner(address: ITileAddress, corner: TileCornerNeighbor, leaves: ReadonlyMap<string, IDrapeInstance>, inner: ReadonlySet<string>): IDrapeInstance[] {
-        const [cornerX, cornerY] = CORNER_POINTS[corner];
-        const count = 2 ** address.lod;
+        const [vertical, horizontal] = TILE_CORNER_EDGES[corner];
+        // Each tile at the point, with the directions of the point seen from the tile, before the turns of the tile.
+        const around: ReadonlyArray<readonly [TileNeighbor, TileEdgeNeighbor, TileEdgeNeighbor]> = [
+            [TileNeighbor.C, vertical, horizontal],
+            [vertical, oppositeTileEdge(vertical), horizontal],
+            [horizontal, vertical, oppositeTileEdge(horizontal)],
+            [corner, oppositeTileEdge(vertical), oppositeTileEdge(horizontal)],
+        ];
         const found: IDrapeInstance[] = [];
-        for (const [dx, dy, childIndex] of TILES_AROUND_POINT) {
-            const row = address.y + cornerY + dy;
-            let column = address.x + cornerX + dx;
-            if (row < 0 || row >= count) continue;
-            if (column < 0 || column >= count) {
-                if (!this.wrapX) continue;
-                column = ((column % count) + count) % count;
-            }
-            let tile: ITileAddress = { lod: address.lod, x: column, y: row };
+        for (const [position, first, second] of around) {
+            const neighbor = this.topology.neighbor(address, position);
+            if (!neighbor) continue;
+            let tile = neighbor.address;
             const coarser = this.leafContaining(tile, leaves);
             if (coarser) {
                 found.push(coarser);
                 continue;
             }
             // Descend towards the point: the child of each tile that has the point as a corner.
-            while (inner.has(key(tile))) tile = childTileAddresses(tile)[childIndex]!;
+            const child = childToward(turnTileEdge(first, neighbor.turns), turnTileEdge(second, neighbor.turns));
+            while (inner.has(key(tile))) tile = childTileAddresses(tile)[child]!;
             const leaf = leaves.get(key(tile));
             if (leaf) found.push(leaf);
         }

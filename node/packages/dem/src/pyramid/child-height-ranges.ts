@@ -1,4 +1,4 @@
-import { childTileAddresses, type ITileAddress } from "@spacexr/tiles";
+import { childTileAddresses, tileAddressKey, type ITileAddress } from "@spacexr/tiles";
 
 import type { QuadrantHeightRanges } from "../codecs";
 
@@ -16,20 +16,16 @@ export class ChildHeightRanges {
         childTileAddresses(parent).forEach((child, index) => {
             const range = quadrants[index]!;
             if (Number.isNaN(range.minimum) || Number.isNaN(range.maximum)) return;
-            this.ranges.set(ChildHeightRanges.key(child), [range.minimum, range.maximum]);
+            this.ranges.set(tileAddressKey(child), [range.minimum, range.maximum]);
         });
     }
 
     /** Unscaled range prepared for a tile, if its parent DEM is known. */
     public rangeFor(address: ITileAddress): readonly [number, number] | undefined {
-        return this.ranges.get(ChildHeightRanges.key(address));
+        return this.ranges.get(tileAddressKey(address));
     }
 
     public get size(): number {
         return this.ranges.size;
-    }
-
-    private static key(address: ITileAddress): string {
-        return `${address.lod}/${address.x}/${address.y}`;
     }
 }

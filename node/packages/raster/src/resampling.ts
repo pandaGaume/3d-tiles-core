@@ -115,3 +115,36 @@ export function generateChildRaster<TData extends IRasterGrid["data"]>(
     }
     return { width, height, channels, data };
 }
+
+/**
+ * Generates a child of a raster that holds its shared edges, in `point` registration: its samples lie on the lattice
+ * of the parent, `(c * w + i) / 2`, interpolated bilinearly. Samples of an edge only read the same edge of the parent,
+ * so neighbouring children keep identical edges without their neighbours, across cube faces included.
+ *
+ * @param parent - Raster of `(w + 1) x (h + 1)` samples.
+ * @param column - Column of the child in its parent, 0 west and 1 east.
+ * @param row - Row of the child in its parent, 0 north and 1 south.
+ */
+export function generatePointChildRaster<TData extends IRasterGrid["data"]>(parent: IRasterGrid<TData>, column: number, row: number): IRasterGrid<TData> {
+    const { width, height, channels } = parent;
+    const cellsX = width - 1;
+    const cellsY = height - 1;
+    const data = allocateLike(parent.data, parent.data.length);
+    for (let j = 0; j < height; j++) {
+        const y = (row * cellsY + j) / 2;
+        const y0 = Math.min(Math.floor(y), cellsY - 1);
+        const fy = y - y0;
+        for (let i = 0; i < width; i++) {
+            const x = (column * cellsX + i) / 2;
+            const x0 = Math.min(Math.floor(x), cellsX - 1);
+            const fx = x - x0;
+            for (let channel = 0; channel < channels; channel++) {
+                const at = (dx: number, dy: number): number => parent.data[((y0 + dy) * width + x0 + dx) * channels + channel]!;
+                const samples = [at(0, 0), at(1, 0), at(0, 1), at(1, 1)];
+                const weights = [(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy];
+                data[(j * width + i) * channels + channel] = weighted(samples, weights);
+            }
+        }
+    }
+    return { width, height, channels, data };
+}

@@ -2,7 +2,7 @@
 
 Rules shared by every implementation that tiles a celestial body, the Earth, the Moon, Mars or any other: the Node.js packages, future .NET and C++ equivalents, and the tile services that produce the data. Web Mercator stops at 85.05 degrees and leaves the poles out; this specification covers the whole body with one tiling, independent of its shape and size.
 
-Status: specification, not implemented yet. [Responsibilities](#responsibilities) lists where each part will live.
+Status: the cube index, its neighbours, the reference surface, datasets, radial DEMs and cube tilesets are implemented in the Node packages; layers in other schemes are not implemented yet. [Responsibilities](#responsibilities) lists where each part lives.
 
 ## Three geometries
 
@@ -104,8 +104,7 @@ The geometric error of a terrain tile is the longest of its four edges, measured
 
 ## Imagery
 
-- Imagery tiles follow the [raster](raster.md) and [draping](draping.md) rules with the address `(face, lod, x, y)`: `tileSize^2` pixels in area registration, stitched by the client into pages in point registration.
-- The column and row a page takes from a neighbour across a face edge are read along the neighbour's edge, turned and reversed as the [edge table](#neighbours-across-faces) gives.
+- Imagery tiles follow the [raster](raster.md) and [draping](draping.md) rules with the address `(face, lod, x, y)`, and hold `(tileSize + 1)^2` samples in point registration, like elevation tiles. Pixels in area registration could not be stitched across faces: where a `S` edge meets an `E` edge, both sides lack the samples of their shared edge.
 
 ## Bounding volumes and other content
 
@@ -143,18 +142,18 @@ A tile service describes each dataset with a descriptor:
 }
 ```
 
-| Member             | Meaning                                                                                              |
-| ------------------ | ---------------------------------------------------------------------------------------------------- |
-| `scheme`           | this specification and its version                                                                   |
-| `body`             | catalogue name of the body                                                                           |
-| `frame`            | body-fixed frame and its version                                                                     |
-| `referenceRadii`   | `a`, `b`, `c` of the reference surface, in metres                                                    |
-| `content`          | `elevation` or `imagery`                                                                             |
-| `encoding`         | tile format, such as `terrarium` for radial heights or `png`, `jpeg`, `webp` for imagery             |
-| `tileSize`         | cells per tile side: elevation tiles hold `tileSize + 1` samples per side, imagery `tileSize` pixels |
-| `minLOD`, `maxLOD` | levels available everywhere                                                                          |
-| `subtrees`         | tiles below which levels down to their own `maxLOD` are available, as the polar caps of the Moon     |
-| `tiles`            | URL template                                                                                         |
+| Member             | Meaning                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------ |
+| `scheme`           | this specification and its version                                                               |
+| `body`             | catalogue name of the body                                                                       |
+| `frame`            | body-fixed frame and its version                                                                 |
+| `referenceRadii`   | `a`, `b`, `c` of the reference surface, in metres                                                |
+| `content`          | `elevation` or `imagery`                                                                         |
+| `encoding`         | tile format, such as `terrarium` for radial heights or `png`, `jpeg`, `webp` for imagery         |
+| `tileSize`         | cells per tile side: tiles hold `tileSize + 1` samples per side                                  |
+| `minLOD`, `maxLOD` | levels available everywhere                                                                      |
+| `subtrees`         | tiles below which levels down to their own `maxLOD` are available, as the polar caps of the Moon |
+| `tiles`            | URL template                                                                                     |
 
 A client never requests a tile outside the declared availability.
 

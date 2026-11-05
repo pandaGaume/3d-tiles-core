@@ -1,4 +1,4 @@
-import { ancestorTileAddress, type ITileAddress } from "../addressing/tile-address";
+import { ancestorTileAddress, tileAddressKey as key, type ITileAddress } from "../addressing/tile-address";
 import { tileNeighborAddress, type TileNeighbor } from "../addressing/tile-neighbors";
 
 /** Loads the content of one tile, or `undefined` when the pyramid has no such tile. */
@@ -57,10 +57,6 @@ interface ITilePyramidEntry<T> {
     readonly address: ITileAddress;
     readonly loading: Promise<T | undefined>;
     content: T | undefined;
-}
-
-function key(address: ITileAddress): string {
-    return `${address.lod}/${address.x}/${address.y}`;
 }
 
 /**

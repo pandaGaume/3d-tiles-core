@@ -8,26 +8,26 @@ The runtime owns the algorithm. The adaptation layer owns host integration.
 
 ## Responsibility split
 
-| Responsibility                                | Runtime                            | Adaptation layer                                         |
-| --------------------------------------------- | ---------------------------------- | -------------------------------------------------------- |
-| Tileset tree and runtime state                | Yes                                | No                                                       |
-| SSE traversal and ADD or REPLACE refinement   | Yes                                | No                                                       |
-| Hole-free REPLACE transition                  | Yes                                | No                                                       |
-| Concurrent loading and retries                | Yes                                | No                                                       |
-| LRU navigation cache and memory budgets       | Yes                                | Reports CPU, GPU and network costs                       |
-| External tileset grafting                     | Yes                                | Decodes or identifies the external tileset               |
-| Implicit QUADTREE and OCTREE traversal        | Yes                                | Loads subtree resources through `IImplicitSubtreeLoader` |
-| Standard JSON and binary `.subtree` resources | Yes                                | Supplies bytes through `IByteResourceLoader`             |
+| Responsibility                                | Runtime                            | Adaptation layer                                                                         |
+| --------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------- |
+| Tileset tree and runtime state                | Yes                                | No                                                                                       |
+| SSE traversal and ADD or REPLACE refinement   | Yes                                | No                                                                                       |
+| Hole-free REPLACE transition                  | Yes                                | No                                                                                       |
+| Concurrent loading and retries                | Yes                                | No                                                                                       |
+| LRU navigation cache and memory budgets       | Yes                                | Reports CPU, GPU and network costs                                                       |
+| External tileset grafting                     | Yes                                | Decodes or identifies the external tileset                                               |
+| Implicit QUADTREE and OCTREE traversal        | Yes                                | Loads subtree resources through `IImplicitSubtreeLoader`                                 |
+| Standard JSON and binary `.subtree` resources | Yes                                | Supplies bytes through `IByteResourceLoader`                                             |
 | XYZ or TMS Web Map and DEM pyramids           | Yes                                | Fetches and decodes payloads with `@spacexr/tiles`, `@spacexr/raster` and `@spacexr/dem` |
-| URI identity and relative resolution          | Yes, through `IRuntimeUriResolver` | May override resolution                                  |
-| glTF, terrain or grid preparation             | No                                 | `ITileActivationAdapter` and its readiness port          |
-| Scene attachment and placement                | No                                 | `ITilePresentationAdapter.present`                       |
-| Scene removal and disposal                    | No                                 | `ITilePresentationAdapter.hide` and `release`            |
-| Camera events                                 | No                                 | `ICameraEventSource`                                     |
-| Visibility, placement and SSE metric          | No                                 | `ISpatialMetric`                                         |
-| Labels, anchors and glyphs                    | No                                 | `IGlyphPublisher`                                        |
-| Real-time statistics and metric aggregation   | Yes                                | May forward metrics through `IRuntimeTelemetry`          |
-| Monitoring backend                            | No                                 | `IRuntimeTelemetry`                                      |
+| URI identity and relative resolution          | Yes, through `IRuntimeUriResolver` | May override resolution                                                                  |
+| glTF, terrain or grid preparation             | No                                 | `ITileActivationAdapter` and its readiness port                                          |
+| Scene attachment and placement                | No                                 | `ITilePresentationAdapter.present`                                                       |
+| Scene removal and disposal                    | No                                 | `ITilePresentationAdapter.hide` and `release`                                            |
+| Camera events                                 | No                                 | `ICameraEventSource`                                                                     |
+| Visibility, placement and SSE metric          | No                                 | `ISpatialMetric`                                                                         |
+| Labels, anchors and glyphs                    | No                                 | `IGlyphPublisher`                                                                        |
+| Real-time statistics and metric aggregation   | Yes                                | May forward metrics through `IRuntimeTelemetry`                                          |
+| Monitoring backend                            | No                                 | `IRuntimeTelemetry`                                                                      |
 
 The provided `EcefSpatialMetric` is a default implementation for raw ECEF coordinates. It delegates ellipsoid, geodetic conversion and local tangent frame mathematics to `@spacexr/geodesy`. The runtime retains 3D Tiles transform composition, bounding volume derivation, horizon and frustum culling, visibility, and screen-space error. A caller can inject a `GeodeticSystem` for WGS84 or another oblate body. An adapter may replace the complete metric when a scene uses a local origin, a floating origin, another reference frame or another unit.
 
@@ -232,3 +232,13 @@ The resolved `IMetadataSnapshot` is passed to content attachment and glyph publi
 ## Current boundary
 
 The generic runtime owns traversal, availability and resource lifecycle. Web tile addressing, tile pyramids and HTTP tile sources live in the renderer-neutral `@spacexr/tiles` package, rasters in `@spacexr/raster` and DEM decoding and surfaces in `@spacexr/dem`, which adapters call from their activation port. Rendering, glTF decoding, terrain grid creation, shader selection and engine-specific resource pooling remain responsibilities of an adaptation package such as `@spacexr/3d-tiles-babylon`, maintained in [3d-tiles-babylon](https://github.com/pandaGaume/3d-tiles-babylon).
+
+## Cube tilesets
+
+A whole body on the [cube index](celestial-tiling.md) is an explicit root, a sphere around the body, whose children are the implicit quadtrees of the six faces, or `4^minLOD` per face.
+
+- Tiles carry oriented `box` bounding volumes, since a `region` cannot describe a polar face. The box follows the measured height range of the tile once known. Culling, picking and screen-space error use this box, and the index footprint of a tile is only used for addressing.
+- The geometric error of a tile comes from the length of its edges on the reference surface.
+- Implicit coordinates map directly to the address on the face: `x` and `y` grow like the tile axes, whatever the scheme of the source.
+- Subtrees with their own levels, such as the polar caps of the Moon, register at their address like the other implicit subtrees.
+- Quadtree balance follows the topology of the index: the neighbour across a face edge may be turned, and edges of two faces balance like any other.

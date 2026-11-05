@@ -43,6 +43,22 @@ encodeTerrariumGrid accepts one Float32 or Float64 channel and returns raw unpre
 
 The output is not a PNG byte stream. Store it with a lossless image encoder that preserves channel bytes and does not apply colour conversion or alpha premultiplication. Grid dimensions are unrestricted, including 257 by 257 vertex samples; the caller defines the sampling positions and shared borders.
 
+## Tiles of a celestial body
+
+`cubeDemPyramid` reads an elevation dataset of a tile service on the [cube index](https://github.com/pandaGaume/3d-tiles-core/blob/main/docs/celestial-tiling.md): radial heights, one surface per face, poles included. Tiles the dataset does not declare interpolate their parent.
+
+```ts
+import { cubeDemPyramid, tileSurfaceNormal } from "@spacexr/dem";
+import { CelestialTileSource } from "@spacexr/tiles";
+
+const source = new CelestialTileSource(await (await fetch("https://tiles.example.com/moon/lola.json")).json());
+const pyramid = cubeDemPyramid(source, decoder, { maxLOD: 14 });
+const heights = await pyramid.tileHeights({ face: 5, lod: 11, x: 1024, y: 1023 });
+const normal = tileSurfaceNormal(source.surface, { face: 5, lod: 11, x: 1024, y: 1023 }, 0.5, 0.5, 1 / 16, heights!.sampler);
+```
+
+A tile service converts sources with heights along the normal of an ellipsoid with `radialHeightOnRay`.
+
 ## Continuous surfaces
 
 `DemPyramid` is a raster pyramid of height grids. Each DEM tile loads with its east, south and south-east neighbours and is stitched with them, so that neighbouring tiles share their edge heights; tiles beyond `maxLOD` sample a sub-area of their ancestor.

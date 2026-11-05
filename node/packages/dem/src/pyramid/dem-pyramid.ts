@@ -1,13 +1,49 @@
 import { RasterPyramid, type IRasterPyramidOptions } from "@spacexr/raster";
-import type { ITileAddress, TileContentLoader } from "@spacexr/tiles";
+import type { CelestialTileSource, ITileAddress, TileContentLoader } from "@spacexr/tiles";
 
-import { createHeightGrid, type IDemDecoder, type IHeightGrid, type IHeightRange, type QuadrantHeightRanges } from "../codecs";
+import { createHeightGrid, type DemEncoding, type IDemDecoder, type IHeightGrid, type IHeightRange, type QuadrantHeightRanges } from "../codecs";
 import { loadDemTile, type IDemTileSource } from "../sources";
 import type { ChildHeightRanges } from "./child-height-ranges";
 
 /** Loader fetching and decoding the tiles of a web DEM source. */
 export function webDemTileLoader(source: IDemTileSource, decoder: IDemDecoder): TileContentLoader<IHeightGrid> {
     return async (address) => (await loadDemTile(source, address, decoder))?.content;
+}
+
+/**
+ * Loader fetching and decoding the tiles of an elevation dataset of a tile service. Its tiles hold radial heights and
+ * their shared edges.
+ *
+ * @throws RangeError When the dataset does not hold elevation.
+ */
+export function cubeDemTileLoader(source: CelestialTileSource, decoder: IDemDecoder): TileContentLoader<IHeightGrid> {
+    const { content, encoding } = source.dataset;
+    if (content !== "elevation") throw new RangeError(`Dataset of ${source.dataset.body} holds ${content}, not elevation.`);
+    return async (address) => {
+        const result = await source.fetchTile(address);
+        return result.status === "absent" ? undefined : decoder.decodeDem(result.bytes, encoding as DemEncoding, undefined);
+    };
+}
+
+/** Options of {@link cubeDemPyramid}. */
+export interface ICubeDemPyramidOptions extends Pick<IDemPyramidOptions, "cacheEntries" | "childHeightRanges" | "onStitched"> {
+    /** Deepest level of the terrain tiles: levels below the dataset interpolate it. Defaults to its deepest level. */
+    maxLOD?: number;
+}
+
+/**
+ * The heights of an elevation dataset of a tile service as one surface per face of the cube. Tiles keep their shared
+ * edges; those the dataset does not declare, and the levels below it, interpolate their parent.
+ */
+export function cubeDemPyramid(source: CelestialTileSource, decoder: IDemDecoder, options: ICubeDemPyramidOptions = {}): DemPyramid {
+    const { maxLOD, ...rest } = options;
+    return new DemPyramid({
+        ...rest,
+        prestitched: true,
+        maxLOD: source.deepestLOD,
+        load: cubeDemTileLoader(source, decoder),
+        ...(maxLOD !== undefined && maxLOD > source.deepestLOD ? { generation: { maxLOD } } : {}),
+    });
 }
 
 export interface IDemPyramidOptions extends Omit<IRasterPyramidOptions<IHeightGrid>, "create"> {
@@ -109,17 +145,19 @@ export class DemPyramid {
     /**
      * Height at a point of the pyramid from the loaded DEM of a tile level, or `NaN` when no DEM tile containing
      * the point is loaded. On a tile edge, either side gives the same value.
+     *
+     * @param face - Face of the point on the cube index, whose coordinates `x` and `y` run over that face. Defaults to 0.
      */
-    public heightAt(x: number, y: number, lod: number): number {
-        return this.rasters.sampleAt(x, y, lod);
+    public heightAt(x: number, y: number, lod: number, face = 0): number {
+        return this.rasters.sampleAt(x, y, lod, 0, face);
     }
 
     /** Mean height over tile levels, ignoring the levels without loaded DEM; `NaN` when none is loaded. */
-    public surfaceHeight(x: number, y: number, lods: readonly number[]): number {
+    public surfaceHeight(x: number, y: number, lods: readonly number[], face = 0): number {
         let sum = 0;
         let count = 0;
         for (const lod of lods) {
-            const height = this.heightAt(x, y, lod);
+            const height = this.heightAt(x, y, lod, face);
             if (Number.isNaN(height)) continue;
             sum += height;
             count++;
@@ -131,9 +169,9 @@ export class DemPyramid {
      * Height gradient, in metres per normalized pyramid unit along `x` and `y`, averaged over tile levels. Each
      * level differentiates one grid cell apart, `1 / (cellsPerTile * 2^lod)`, so that the gradient follows the mesh
      * built with that many cells per tile rather than DEM detail its triangles cannot show. Missing neighbours fall
-     * back to one-sided differences.
+     * back to one-sided differences, as on the edges of a cube face.
      */
-    public surfaceGradient(x: number, y: number, lods: readonly number[], cellsPerTile: number): [number, number] | undefined {
+    public surfaceGradient(x: number, y: number, lods: readonly number[], cellsPerTile: number, face = 0): [number, number] | undefined {
         const difference = (before: number, center: number, after: number, step: number): number | undefined => {
             if (!Number.isNaN(before) && !Number.isNaN(after)) return (after - before) / (2 * step);
             if (!Number.isNaN(after) && !Number.isNaN(center)) return (after - center) / step;
@@ -145,9 +183,9 @@ export class DemPyramid {
         let count = 0;
         for (const lod of lods) {
             const step = 1 / (cellsPerTile * 2 ** lod);
-            const center = this.heightAt(x, y, lod);
-            const alongX = difference(this.heightAt(x - step, y, lod), center, this.heightAt(x + step, y, lod), step);
-            const alongY = difference(this.heightAt(x, y - step, lod), center, this.heightAt(x, y + step, lod), step);
+            const center = this.heightAt(x, y, lod, face);
+            const alongX = difference(this.heightAt(x - step, y, lod, face), center, this.heightAt(x + step, y, lod, face), step);
+            const alongY = difference(this.heightAt(x, y - step, lod, face), center, this.heightAt(x, y + step, lod, face), step);
             if (alongX === undefined || alongY === undefined) continue;
             gradientX += alongX;
             gradientY += alongY;
