@@ -27,6 +27,22 @@ if (tile?.content) {
 
 `loadDemTile` returns `undefined` when the tile does not exist. `DemInfos` statistics ignore missing samples. Display `dem.source.attribution` with the data.
 
+## Encode Terrarium elevation pixels
+
+```ts
+import { createHeightGrid, encodeTerrariumGrid, terrariumPixel } from "@spacexr/dem";
+
+const pixel = terrariumPixel(12.5); // [128, 12, 128, 255]
+const heights = createHeightGrid(2, 1, new Float32Array([12.5, NaN]));
+const pixels = encodeTerrariumGrid(heights);
+```
+
+Terrarium stores metre heights in RGB with a step of 1/256 metre and a maximum rounding error of 1/512 metre. Supported finite heights are -32768 to 32767.99609375 metres inclusive. NaN becomes a transparent NoData pixel; other invalid or out-of-range values throw. The minimum valid height is opaque and is distinct from NoData.
+
+encodeTerrariumGrid accepts one Float32 or Float64 channel and returns raw unpremultiplied RGBA pixels with the same dimensions and sample order. An optional Uint8Array or Uint8ClampedArray destination avoids allocating the output buffer. Invalid input is detected before writing that destination. Source and destination storage must not overlap.
+
+The output is not a PNG byte stream. Store it with a lossless image encoder that preserves channel bytes and does not apply colour conversion or alpha premultiplication. Grid dimensions are unrestricted, including 257 by 257 vertex samples; the caller defines the sampling positions and shared borders.
+
 ## Continuous surfaces
 
 `DemPyramid` is a raster pyramid of height grids. Each DEM tile loads with its east, south and south-east neighbours and is stitched with them, so that neighbouring tiles share their edge heights; tiles beyond `maxLOD` sample a sub-area of their ancestor.

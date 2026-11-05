@@ -14,6 +14,14 @@ Rules shared by every implementation of the DEM layer (`@spacexr/dem` for Node.j
 - A pixel whose alpha is 0 is missing by default and stored as `NaN`.
 - The minimum and maximum of a height grid ignore missing samples and are `NaN` when every sample is missing.
 
+## Terrarium encoding
+
+- A valid height h in metres becomes the integer q = round((h + 32768) * 256). Round ties toward the higher height. Split the whole integer into R = floor(q / 65536), G = floor(q / 256) mod 256, B = q mod 256, and A = 255. Rounding the integer before splitting preserves channel carries.
+- The inclusive input range is [-32768, 32767.99609375] metres. Reject infinities and values outside that interval; do not silently saturate. The quantization step is 1/256 metre and the maximum rounding error is 1/512 metre.
+- NaN encodes to [0, 0, 0, 0]. The lowest valid height encodes to [0, 0, 0, 255], so it remains distinct from missing data.
+- Preserve row-major north-west sample order, grid dimensions and source heights. Encoding does not resample or create shared borders. A caller-supplied destination is exact-sized, non-overlapping and remains unchanged if validation fails.
+- Encoded pixels are raw RGBA. A separate lossless image encoder must preserve their bytes, colour interpretation and unpremultiplied alpha. The elevation codec does not perform image compression.
+
 ## Statistics and normals
 
 - `lowest` and `highest` locate the extreme valid samples by column and row; `mean` and `delta = maximum - minimum` ignore missing samples and are `NaN` when every sample is missing.

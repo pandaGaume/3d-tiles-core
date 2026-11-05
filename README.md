@@ -49,7 +49,7 @@ npm ci
 npm run check
 ```
 
-The Node workspace publishes `@spacexr/3d-tiles-core`, `@spacexr/tiles`, `@spacexr/raster`, `@spacexr/dem`, `@spacexr/grid` and `@spacexr/3d-tiles-runtime` under the `pandaGaume` GitHub organization. `@spacexr/tiles` is independent of 3D Tiles and of the tile content; the runtime depends on it to expose web map and DEM pyramids as implicit tilesets. `@spacexr/raster` adds rasters of any kind to those tiles, imagery and elevation alike, and `@spacexr/dem` elevation models on top of it; see [Web tiles](docs/tiles.md), [Rasters](docs/raster.md), [Digital elevation models](docs/dem.md) and [Raster draping](docs/draping.md). `@spacexr/grid` builds terrain grid topologies for those tiles, independent of 3D Tiles and of any renderer; see [Terrain grids](docs/grid.md).
+The Node workspace publishes `@spacexr/3d-tiles-core`, `@spacexr/tiles`, `@spacexr/raster`, `@spacexr/dem`, `@spacexr/grid` and `@spacexr/3d-tiles-runtime` under the `pandaGaume` GitHub organization. `@spacexr/tiles` is independent of 3D Tiles and of the tile content; the runtime depends on it to expose web map and DEM pyramids as implicit tilesets. `@spacexr/raster` adds rasters of any kind to those tiles, imagery and elevation alike, and `@spacexr/dem` elevation models on top of it; see [Web tiles](docs/tiles.md), [Rasters](docs/raster.md), [Digital elevation models](docs/dem.md) and [Raster draping](docs/draping.md). `@spacexr/grid` builds terrain grid topologies for those tiles, independent of 3D Tiles and of any renderer; see [Terrain grids](docs/grid.md). [Celestial tiling](docs/celestial-tiling.md) specifies the cube tiling that will cover whole bodies, poles included, for the Earth, the Moon, Mars and other bodies.
 
 ## Babylon.js
 
