@@ -1,6 +1,7 @@
 import type { GeodeticSystem } from "@spacexr/geodesy";
 
 import type { IUtmPlacement, IUtmPlacementOptions } from "./utm-types";
+import type { IVerticalPlacement } from "./vertical-scale";
 
 /** Mutable three-dimensional vector. ECEF values are expressed in metres. */
 export interface IVector3 {
@@ -72,6 +73,10 @@ export interface IEcefSpatialState {
     geometricError: number;
     /** Report of the conversions and approximations applied, for tiles located by `SPACEXR_bounding_volume_utm`. */
     utmPlacement?: IUtmPlacement;
+    /** Point whose height moves the tile with the vertical scale, when the metric has a vertical placement. */
+    verticalAnchor?: IVector3;
+    /** Origin of the object the tile belongs to; its descendants move with it. */
+    verticalObject?: IVector3;
 }
 
 /** Configuration for the renderer-neutral ECEF spatial metric. */
@@ -86,4 +91,9 @@ export interface IEcefSpatialMetricOptions {
     defaultVerticalFovRadians?: number;
     /** Datum transformation and geoid model used to place `SPACEXR_bounding_volume_utm` extents. */
     utm?: IUtmPlacementOptions;
+    /**
+     * Moves the bounds of objects with the vertical scale of the scene. Not for terrain tiles, whose volumes already hold
+     * their scaled heights.
+     */
+    vertical?: IVerticalPlacement;
 }

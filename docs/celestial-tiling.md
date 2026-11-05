@@ -102,6 +102,16 @@ The geometric error of a terrain tile is the longest of its four edges, measured
 - Elevation tiles hold `(tileSize + 1)^2` samples in point registration, from the north-west corner, rows southward, as [stitched rasters](raster.md#stitching). Neighbouring tiles, across a face edge included, hold the same samples on their shared edge, without any request to their neighbours.
 - Bodies without a solid surface, such as Jupiter and Saturn, only have imagery over their reference surface.
 
+## Vertical scale
+
+A scene has one vertical scale `s`, shared by everything in it: terrain, picking, tile bounds, the camera and objects. Changing it changes all of them.
+
+- The terrain point of height `h` moves to `P = (r_ref(d) + s h) * d`. Volumes of terrain tiles use `s` times their height range, and follow its changes when the runtime is given the scale. Web Mercator runtimes are not given it: their tiles keep the volumes of the scale they were loaded with.
+- An object moves as a whole by `h (s - 1)` along its up direction, `h` being the height of its origin. An object placed on the terrain stays on it. It is not stretched: its size stays true, and its parts keep their places.
+- The first tile with a position, from the root down, is an object, with all its descendants. A tile above any object moves with the centre of its volume, and grows by `r |s - 1|` to keep the objects of other heights inside.
+- A wide object follows the terrain at its origin only: to follow the relief, its parts must be separate objects.
+- The scale is a display parameter. It never changes tile data or wire values.
+
 ## Imagery
 
 - Imagery tiles follow the [raster](raster.md) and [draping](draping.md) rules with the address `(face, lod, x, y)`, and hold `(tileSize + 1)^2` samples in point registration, like elevation tiles. Pixels in area registration could not be stitched across faces: where a `S` edge meets an `E` edge, both sides lack the samples of their shared edge.
@@ -123,6 +133,8 @@ Many imagery and elevation layers are published in Web Mercator (EPSG:3857), geo
 - Layers are stacked; each declares its coverage. A Web Mercator layer has no data beyond 85.05 degrees, and the next layer of the stack, a polar or a cube layer, covers the cap.
 
 ## Dataset descriptor
+
+Generating a dataset from a raster source is described in [From a raster source to the cube](cube-sources.md).
 
 A tile service describes each dataset with a descriptor:
 
@@ -158,6 +170,8 @@ A tile service describes each dataset with a descriptor:
 A client never requests a tile outside the declared availability.
 
 ## Web Mercator
+
+Web Mercator is the official terrain engine, and the cube an alternative under test. What the cube needs stays out of the Web Mercator path: tilings, shader defines and opt-in options, never shared defaults. A view of Web Mercator must render the same pixels with or without the cube code.
 
 Web Mercator remains a tiling scheme for layers and terrain served in XYZ, without a tile service. Its terrain heights stay geodetic, along the normal of the ellipsoid, and it leaves the poles out. A renderer selects the scheme of its terrain; the engines, the grid topologies and the runtime are the same for both.
 

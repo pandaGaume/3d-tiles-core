@@ -8,6 +8,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- `@spacexr/tiles/reprojection`: projections, WMTS capabilities, source levels and resampling, from raster sources to the cube index. `docs/cube-sources.md` is the brief of a tile service, for the Solar System Treks and WGS84 sources.
+- `VerticalScale`, the vertical exaggeration shared by a scene: a `TileRuntime` given it derives its tiles again when it changes, and `EcefSpatialMetric` with a `vertical` placement moves objects with it. `tileBoundingVolume` may be a function, evaluated again.
 - Multilanguage repository structure.
 - Initial TypeScript wire model for 3D Tiles 1.1.
 - Lossless JSON codecs and structural validation.
@@ -24,6 +26,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Tile topologies: `ITileTopology` gives neighbours with their quarter turns and the area of a tile in another one, with `flatTileTopology` and `CUBE_TILE_TOPOLOGY`. `DrapeInstanceCut` takes a topology and joins instances across cube faces, with corners of 3 tiles. Pyramids, residency and stitching key tiles by face with `tileAddressKey`. `RasterPyramid` takes `prestitched` tiles, which already hold their shared edges.
 - Cube DEMs: `parseCelestialDataset` and `CelestialTileSource` read the dataset of a tile service and its availability. `cubeDemPyramid` gives its radial heights as one surface per face, tiles it does not declare interpolating their parent. `tileSurfaceNormal` gives the normal of a displaced surface on any tile surface, and `radialHeightOnRay` converts sources with heights along a normal.
 - Cube tilesets in the runtime: `createCubeImplicitSource` presents a whole body as an explicit root with the implicit quadtrees of the six faces, with oriented boxes from `cubeTileBoundingBox`, geometric errors following the distortion of the cube, measured height ranges and subtrees with their own levels. `quadtreeBalance` takes a `topology` and balances across cube faces.
+- Reprojection in `@spacexr/tiles/reprojection`: geographic, polar stereographic and Web Mercator projections from the directions of the cube index, WMTS capabilities without an XML library, the source level of a cube level, the source tiles a cube tile reads, bilinear resampling, heights rebased on a reference surface and cap blends. Checked against the capabilities and the data of Moon Trek.
 - Celestial tiling specification: an equi-angular cube index covering whole bodies, poles included, with its face edge table, triaxial reference surfaces, radial terrain heights, layers in other schemes and a dataset descriptor for tile services.
 - Optional real-time runtime statistics, metric aggregation, cache events and eviction hooks.
 - External `@spacexr/geodesy` integration for ellipsoid-aware ECEF regions and horizon culling.
@@ -58,6 +61,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- `quadtreeBalance.fillGaps`, used on the cube index, leaves no holes in the view: a tile the balance must refine, whose children were not ready, kept any displayed descendant, even one covering a corner of it, and the rest stayed empty until the children loaded. With the option it keeps them only when they cover the visible part of the tile, and falls back to a ready tile otherwise.
 - Tiles seen before load again after zooming out and in: a cancelled load no longer counts against `maxLoadAttempts`, and the contents of an activation cancelled before it started return to the idle state instead of staying queued forever.
 - The children of a refined tile are requested together instead of one after another.
 

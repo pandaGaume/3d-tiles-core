@@ -42,6 +42,8 @@ interface ICamera {
     focus: readonly [number, number];
     /** Hides the tiles east of the prime meridian, as if they were outside the view. */
     hideEast?: boolean;
+    /** Hides the tiles of the regions it accepts, as if they were outside the view. */
+    hidden?: ((region: readonly number[]) => boolean) | undefined;
 }
 
 interface ISpatial {
@@ -55,6 +57,7 @@ class FocusMetric implements ISpatialMetric<ICamera, ISpatial> {
     }
 
     public isVisible(spatial: ISpatial, camera: ICamera): boolean {
+        if (camera.hidden?.(spatial.region)) return false;
         return !camera.hideEast || spatial.region[0]! < 0;
     }
 
@@ -84,7 +87,7 @@ function largestEdgeJump(tiles: ReadonlyArray<{ lod: number; x: number; y: numbe
 
 /** Runtime focusing just west of the prime meridian, so that the deepest tiles touch the eastern half of the map. */
 function createScenario(
-    quadtreeBalance: boolean,
+    quadtreeBalance: boolean | { fillGaps: boolean },
     delayed?: (address: { lod: number; x: number; y: number }) => Promise<void> | undefined,
     preloadSiblings = false,
     coarseningDelayFrames = 0,
@@ -169,6 +172,57 @@ describe("TileRuntime quadtree balance", () => {
 });
 
 describe("TileRuntime quadtree balance while turning", () => {
+    /** The whole of a tile enters the view while most of its children load; gives the smallest area covered meanwhile. */
+    async function coveredWhileLoading(quadtreeBalance: boolean | { fillGaps: boolean }): Promise<number> {
+        let release: () => void = () => undefined;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        // The north-western tile N of level 1 has children A, its north-western one, and three others that never loaded.
+        const northWestChild = (address: { lod: number; x: number; y: number }) => address.lod === 2 && address.x < 2 && address.y < 2;
+        const { runtime, camera, selected } = createScenario(quadtreeBalance, (address) =>
+            northWestChild(address) && (address.x > 0 || address.y > 0) ? gate : undefined,
+        );
+        const a = { lod: 2, x: 0, y: 0 };
+        const isA = (tile: { lod: number; x: number; y: number }) => tile.lod === a.lod && tile.x === a.x && tile.y === a.y;
+        // Only A is in view inside N. The focus just east of the prime meridian makes the balance refine N.
+        camera.focus = [0.01, 0.3];
+        const smallerThanN = (region: readonly number[]) => region[2]! - region[0]! < Math.PI - 1e-9;
+        camera.hidden = (region) =>
+            smallerThanN(region) && region[2]! <= 1e-9 && region[1]! >= -1e-9 && !(region[2]! <= -Math.PI / 2 + 1e-9 && region[1]! >= 1.16);
+        for (let frame = 0; frame < 20; frame++) {
+            await runtime.update(camera);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        expect(selected().some(isA)).toBe(true);
+
+        // The whole of N enters the view while the three other children load: A alone would leave them empty.
+        camera.hidden = undefined;
+        const coveredArea = () => selected().reduce((area, tile) => area + 4 ** -tile.lod, 0);
+        let smallest = 1;
+        for (let frame = 0; frame < 10; frame++) {
+            await runtime.update(camera);
+            smallest = Math.min(smallest, coveredArea());
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+
+        release();
+        for (let frame = 0; frame < 4; frame++) {
+            await runtime.update(camera);
+            await runtime.whenIdle();
+        }
+        expect(coveredArea()).toBe(1);
+        expect(largestEdgeJump(selected())).toBe(1);
+        await runtime.dispose();
+        return smallest;
+    }
+
+    it("leaves no empty area with fillGaps, when the refinements it keeps do not cover the tile the balance refines", async () => {
+        expect(await coveredWhileLoading({ fillGaps: true })).toBe(1);
+    });
+
+    it("keeps the refinements it displays by default, even when they do not cover the tile", async () => {
+        expect(await coveredWhileLoading(true)).toBeLessThan(1);
+    });
+
     it("keeps a displayed refinement when a neighbour it cannot follow comes into view", async () => {
         let release: () => void = () => undefined;
         const gate = new Promise<void>((resolve) => (release = resolve));

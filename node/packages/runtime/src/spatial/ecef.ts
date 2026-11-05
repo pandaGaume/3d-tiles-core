@@ -11,6 +11,7 @@ import {
     sphereOutsidePlane,
 } from "./bounding-volumes";
 import type { IEcefCameraFrame, IEcefSpatialMetricOptions, IEcefSpatialState } from "./ecef-types";
+import { placeVertically, type IVerticalPlacement } from "./vertical-scale";
 import { boundsFromUtm } from "./utm-bounds";
 import type { IUtmPlacementOptions } from "./utm-types";
 import { matrixOf, maximumScale, multiplyTransforms, vectorLength } from "./matrix";
@@ -31,6 +32,7 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
     private readonly defaultViewportHeight: number;
     private readonly defaultVerticalFovRadians: number;
     private readonly utmOptions: IUtmPlacementOptions;
+    private readonly vertical: IVerticalPlacement | undefined;
 
     /**
      * Creates an ECEF spatial metric.
@@ -43,6 +45,7 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
         this.defaultViewportHeight = options.defaultViewportHeight ?? DEFAULT_VIEWPORT_HEIGHT;
         this.defaultVerticalFovRadians = options.defaultVerticalFovRadians ?? DEFAULT_VERTICAL_FOV_RADIANS;
         this.utmOptions = options.utm ?? {};
+        this.vertical = options.vertical;
 
         if (!Number.isFinite(this.defaultViewportHeight) || this.defaultViewportHeight <= 0) {
             throw new RangeError("The default viewport height must be a positive finite number.");
@@ -77,6 +80,11 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
      * @returns Spatial state expressed in ECEF metres.
      */
     public derive(context: ISpatialDerivationContext<IEcefSpatialState>): IEcefSpatialState {
+        const state = this.deriveUnscaled(context);
+        return this.vertical ? placeVertically(state, this.vertical, context.parent) : state;
+    }
+
+    private deriveUnscaled(context: ISpatialDerivationContext<IEcefSpatialState>): IEcefSpatialState {
         const localTransform = matrixOf(context.tile.transform);
         const worldTransform = context.parent ? multiplyTransforms(context.parent.worldTransform, localTransform) : localTransform;
         const scale = maximumScale(worldTransform);

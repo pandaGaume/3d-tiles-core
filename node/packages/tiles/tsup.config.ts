@@ -6,6 +6,7 @@ export default defineConfig({
         "addressing/index": "src/addressing/index.ts",
         "cube/index": "src/cube/index.ts",
         "pyramid/index": "src/pyramid/index.ts",
+        "reprojection/index": "src/reprojection/index.ts",
         "sources/index": "src/sources/index.ts",
     },
     format: ["esm"],

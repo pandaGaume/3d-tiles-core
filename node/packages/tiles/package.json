@@ -58,6 +58,11 @@
             "import": "./dist/pyramid/index.js",
             "default": "./dist/pyramid/index.js"
         },
+        "./reprojection": {
+            "types": "./dist/reprojection/index.d.ts",
+            "import": "./dist/reprojection/index.js",
+            "default": "./dist/reprojection/index.js"
+        },
         "./sources": {
             "types": "./dist/sources/index.d.ts",
             "import": "./dist/sources/index.js",
