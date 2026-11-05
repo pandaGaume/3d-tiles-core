@@ -22,6 +22,15 @@ Rules shared by every implementation of the DEM layer (`@spacexr/dem` for Node.j
 - Preserve row-major north-west sample order, grid dimensions and source heights. Encoding does not resample or create shared borders. A caller-supplied destination is exact-sized, non-overlapping and remains unchanged if validation fails.
 - Encoded pixels are raw RGBA. A separate lossless image encoder must preserve their bytes, colour interpretation and unpremultiplied alpha. The elevation codec does not perform image compression.
 
+## Cube tiles
+
+The tiles of the [cube index](celestial-tiling.md#terrain-heights) hold radial heights and their shared edges, `(tileSize + 1)^2` samples.
+
+- A dataset of a tile service gives the surface of its heights and the tiles it declares. A tile outside its declared availability is never requested.
+- A tile the dataset does not declare, or below its deepest level, interpolates its parent bilinearly, down to the deepest level of the terrain.
+- The normal of a displaced surface on any tile is the cross product of the differences of the positions of its neighbouring points, `east - west` and `north - south`, one-sided where a height is missing, as on the edge of a cube face.
+- A tile service converts a source with heights along the normal of an ellipsoid by searching the point of the relief on the ray: the geodetic position of a point of the ray gives the height of the relief, whose radial height gives the next point.
+
 ## Statistics and normals
 
 - `lowest` and `highest` locate the extreme valid samples by column and row; `mean` and `delta = maximum - minimum` ignore missing samples and are `NaN` when every sample is missing.

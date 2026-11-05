@@ -22,8 +22,8 @@ export interface IRasterPyramidOptions<TGrid extends IRasterGrid> extends Omit<I
     generation?: IRasterGenerationOptions;
     /**
      * Source tiles already hold their shared edges, `(w + 1) x (h + 1)` samples in `point` registration, as a tile
-     * service of the cube index produces them. Neighbours are neither loaded nor read, and generated levels interpolate
-     * their parent bilinearly. Defaults to false.
+     * service of the cube index produces them. Neighbours are neither loaded nor read. Generated levels, and the tiles a
+     * sparse source does not hold, interpolate their parent bilinearly. Defaults to false.
      */
     prestitched?: boolean;
 }
@@ -79,8 +79,8 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
             ...pyramid,
             maxLOD: generation?.maxLOD ?? pyramid.maxLOD,
             load: (address) => {
-                if (address.lod <= this.sourceMaxLOD) return pyramid.load(address);
-                return prestitched ? this.generatePoint(address) : this.generate(address, interpolation);
+                if (!prestitched) return address.lod <= this.sourceMaxLOD ? pyramid.load(address) : this.generate(address, interpolation);
+                return this.loadPrestitched(address, pyramid.load);
             },
             prefetch: prestitched ? [] : [TileNeighbor.E, TileNeighbor.S, TileNeighbor.SE],
             onLoad: (address, grid) => this.notifyStitched(this.stitched.add(address, grid)),
@@ -187,9 +187,15 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
         for (const listener of this.stitchedListeners) listener(changed);
     }
 
-    /** Generates a tile below the source levels from its parent, which holds its shared edges. */
-    private async generatePoint(address: ITileAddress): Promise<IRasterGrid<TGrid["data"]> | undefined> {
-        const parent = parentTileAddress(address)!;
+    /** Loads a tile that holds its shared edges, or interpolates its parent where the source has none. */
+    private async loadPrestitched(
+        address: ITileAddress,
+        load: (address: ITileAddress) => Promise<IRasterGrid<TGrid["data"]> | undefined>
+    ): Promise<IRasterGrid<TGrid["data"]> | undefined> {
+        const own = address.lod <= this.sourceMaxLOD ? await load(address) : undefined;
+        if (own) return own;
+        const parent = parentTileAddress(address);
+        if (!parent) return undefined;
         const region = await this.tiles.load(parent);
         return region && generatePointChildRaster(region.content, address.x - parent.x * 2, address.y - parent.y * 2);
     }
