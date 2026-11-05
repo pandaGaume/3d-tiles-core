@@ -12,7 +12,7 @@ import {
 } from "@spacexr/tiles";
 import { describe, expect, it, vi } from "vitest";
 
-import { DemPyramid, cubeDemPyramid, cubeDemTileLoader, createHeightGrid, radialHeightOnRay, tileSurfaceNormal, type IDemDecoder } from "../src";
+import { ChildHeightRanges, DemPyramid, cubeDemPyramid, cubeDemTileLoader, createHeightGrid, radialHeightOnRay, tileSurfaceNormal, type IDemDecoder } from "../src";
 
 const MOON = new CubeTileSurface(ReferenceSurface.sphere(1737400));
 
@@ -100,6 +100,17 @@ describe("cube DEM tiles", () => {
         expect(pyramid.surfaceHeight(0.25, 0.25, [1], 2)).toBe(24);
         expect(pyramid.surfaceGradient(0.25, 0.25, [1], 2, 2)).toEqual([4, 12]);
         expect(pyramid.surfaceGradient(0.25, 0.25, [1], 2, 3)).toBeUndefined();
+    });
+});
+
+describe("ChildHeightRanges", () => {
+    it("keeps the tiles of different faces apart", () => {
+        const ranges = new ChildHeightRanges();
+        const range = { minimum: -5, maximum: 9 };
+        ranges.recordChildren({ face: 3, lod: 1, x: 0, y: 0 }, [range, range, range, range]);
+        expect(ranges.rangeFor({ face: 3, lod: 2, x: 1, y: 1 })).toEqual([-5, 9]);
+        expect(ranges.rangeFor({ face: 4, lod: 2, x: 1, y: 1 })).toBeUndefined();
+        expect(ranges.rangeFor({ lod: 2, x: 1, y: 1 })).toBeUndefined();
     });
 });
 
