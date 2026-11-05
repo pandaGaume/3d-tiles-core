@@ -58,6 +58,8 @@ The faces, the mapping, the edge table and the radial heights are specified in `
 
 `CelestialTileSource` reads a dataset of a tile service from its descriptor, checked by `parseCelestialDataset`, and never requests a tile outside its declared availability.
 
+`@spacexr/tiles/reprojection` takes the samples of a cube tile to a raster source: projections, WMTS capabilities, source levels and resampling, without any XML library. See `docs/cube-sources.md`.
+
 Terrain geometry goes through a surface: `CubeTileSurface` on a `ReferenceSurface`, or `WebMercatorTileSurface` on an ellipsoid. Both implement `ITileSurface`, so renderers and `@spacexr/grid` stay independent of the projection.
 
 ## URL templates
