@@ -58,6 +58,15 @@ Every triangle is then oriented counter-clockwise. The rest of the grid keeps it
 
 Split pieces require even `columns` and `rows` of at least 4, so that no triangle touches two edges away from a corner. The pieces of any combination cover exactly the triangles of the single grid for the same combination.
 
+## Tile geometry
+
+A surface places the tiles of a pyramid on a body, whatever its projection: a tile coordinate and a height give a body-fixed position, and the surface gives the direction heights move a point along. Web Mercator surfaces use geodetic heights along the normal of the ellipsoid; [cube surfaces](celestial-tiling.md#terrain-heights) use radial heights.
+
+- A grid placed on a tile holds the centre of the tile on the reference surface, in double precision, and the vertices relative to it, along the body-fixed axes. Distances within a tile keep 32-bit floats precise.
+- Parameters are recovered from the half-cell lattice in double precision, so both sides of a shared edge compute the same points, across cube faces included.
+- Triangles keep their winding: counter-clockwise seen from outside the body, on every face.
+- A shape is a regular lattice of `(cells + 1)^2` vertices on the reference surface, rows from north to south, which a renderer uploads once and displaces on the GPU. A point of a tile is `center + Rz(rotation) * position`. Tiles of one Web Mercator level and row share a shape, turned by the longitude of their centre. Each cube tile has its own: the same address on another face is never in view with it.
+
 ## Vertex placement
 
 The vertex builder, ported from the SpaceXR `TerrainNormalizedGridBuilder`, places a topology in a local frame centred on the grid:

@@ -56,6 +56,8 @@ const corner = moon.point(cubeTileDirection(site, 0, 0), -2500); // radial heigh
 
 The faces, the mapping, the edge table and the radial heights are specified in `docs/celestial-tiling.md`.
 
+Terrain geometry goes through a surface: `CubeTileSurface` on a `ReferenceSurface`, or `WebMercatorTileSurface` on an ellipsoid. Both implement `ITileSurface`, so renderers and `@spacexr/grid` stay independent of the projection.
+
 ## URL templates
 
 | Variable                  | Value                                                                        |
