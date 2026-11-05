@@ -1,4 +1,4 @@
-import type { IContent, ITile } from "@spacexr/3d-tiles-core";
+import type { IBoundingVolume, IContent, ITile } from "@spacexr/3d-tiles-core";
 
 import type { IRuntimeImplicitTile } from "../implicit/types";
 import type { IRuntimeFeatureMetadata, IMetadataSnapshot } from "../metadata/types";
@@ -80,6 +80,8 @@ export class Tile3D<TSpatial, TRenderHandle = unknown, TGlyphHandle = unknown> {
     public spatial: TSpatial;
     /** True once the tile own content reported its measured bounding volume; parent refreshes no longer apply. */
     public contentBoundsRefined = false;
+    /** The volume measured on the content, when it reported one. */
+    public contentBounds: (() => IBoundingVolume) | undefined = undefined;
     public readonly contents: Array<Tile3DContent<TRenderHandle>>;
     public visible = false;
     public screenSpaceError = 0;

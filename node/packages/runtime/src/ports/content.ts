@@ -27,7 +27,8 @@ export type ContentLoadResult<TContentHandle> =
            * serialized tile is not modified. A tile with several contents must report a volume
            * enclosing all of them.
            */
-          tileBoundingVolume?: IBoundingVolume;
+          /** A volume measured on the content. A function is evaluated again when the vertical scale changes. */
+          tileBoundingVolume?: IBoundingVolume | (() => IBoundingVolume);
       }
     | {
           kind: "external-tileset";

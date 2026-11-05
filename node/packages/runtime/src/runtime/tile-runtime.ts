@@ -44,6 +44,7 @@ import type {
     IRuntimeUriResolver,
 } from "../ports";
 import { StandardUriResolver } from "../ports";
+import type { VerticalScale } from "../spatial/vertical-scale";
 import type {
     IResolvedRuntimeCacheOptions,
     IRuntimeCacheCounters,
@@ -131,6 +132,8 @@ export interface ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHa
      * global pyramid. Defaults to false.
      */
     quadtreeBalance?: boolean | IQuadtreeBalanceOptions;
+    /** Vertical scale of the scene. Its changes derive the spatial state of every tile again. */
+    verticalScale?: VerticalScale;
     maxConcurrentLoads?: number;
     maxLoadAttempts?: number;
     cache?: IRuntimeCacheOptions | false;
@@ -154,6 +157,12 @@ export interface IQuadtreeBalanceOptions {
     wrapX?: boolean;
     /** How addresses from `IImplicitTileResolver.addressOf` connect, for example across cube faces, in place of `wrapX`. */
     topology?: ITileTopology;
+    /**
+     * A tile the balance must refine, whose children are not ready, keeps its displayed descendants only when they cover
+     * every visible part of it; otherwise it falls back to a ready tile. Defaults to false: it keeps any displayed
+     * descendant, even one covering a corner of it, and the rest stays empty until the children load.
+     */
+    fillGaps?: boolean;
 }
 
 interface IContentCacheEntry<TSpatial, TContentHandle, TGlyphHandle> {
@@ -220,6 +229,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     private pendingCamera: TCamera | undefined;
     private pendingCameraChanges = CameraChangeFlags.None;
     private currentCameraChanges = CameraChangeFlags.None;
+    private readonly unsubscribeVerticalScale: (() => void) | undefined;
+    private spatialStale = false;
     private cameraDirty = false;
     private frame = 0;
     /** Start time of the recent frames, oldest first; older frames are beyond the cache retention. */
@@ -255,6 +266,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
                   ...(typeof options.quadtreeBalance === "object" && options.quadtreeBalance.topology
                       ? { topology: options.quadtreeBalance.topology }
                       : {}),
+                  ...(typeof options.quadtreeBalance === "object" && options.quadtreeBalance.fillGaps ? { fillGaps: true } : {}),
               }
             : undefined;
         this.maxLoadAttempts = Math.max(1, Math.floor(options.maxLoadAttempts ?? 3));
@@ -263,6 +275,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         this.uriResolver = options.adapter.uri ?? new StandardUriResolver();
         this.scheduler = new PriorityScheduler(options.maxConcurrentLoads ?? 4);
         this.instrumentation = new RuntimeInstrumentation(options.instrumentation, this.id, () => this.collectStatistics());
+        this.unsubscribeVerticalScale = options.verticalScale?.subscribe(() => {
+            this.spatialStale = true;
+            this.refreshNeeded = true;
+        });
     }
 
     public get root(): IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle> | undefined {
@@ -329,6 +345,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         const operation = this.updateChain.then(async () => {
             await this.start();
             this.currentCameraChanges = changes;
+            if (this.spatialStale) this.refreshSpatialStates();
             try {
                 return await this.performUpdate(camera);
             } finally {
@@ -376,6 +393,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         this.disposed = true;
         this.cameraSubscription?.unsubscribe();
         this.cameraSubscription = undefined;
+        this.unsubscribeVerticalScale?.();
         this.lifecycleController.abort();
         this.scheduler.dispose();
         await this.updateChain;
@@ -545,11 +563,11 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             // A refinement required by the quadtree balance keeps the finer
             // descendants already displayed: falling back to a coarser ready
             // tile would display it next to a tile two or more levels finer.
-            // Unless they leave part of the tile empty, which is worse than an edge waiting for its balance.
+            // With `fillGaps`, unless they leave part of the tile empty, which is worse than an edge waiting for its balance.
             if (
                 balanceRequested &&
                 this.stableReplacementCut &&
-                this.selectedDescendantsCover(node, camera) &&
+                (!this.quadtreeBalance?.fillGaps || this.selectedDescendantsCover(node, camera)) &&
                 this.retainVisibleSelectedDescendants(node, camera, desired)
             )
                 return;
@@ -1116,7 +1134,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             else delete content.cost;
             if (result.featureMetadata) content.featureMetadata = result.featureMetadata;
             else delete content.featureMetadata;
-            if (result.tileBoundingVolume) this.refineTileBoundingVolume(node, result.tileBoundingVolume);
+            if (result.tileBoundingVolume) {
+                const measured = result.tileBoundingVolume;
+                this.refineTileBoundingVolume(node, typeof measured === "function" ? measured : () => measured);
+            }
             this.refreshImplicitChildBounds(node);
             return;
         }
@@ -1147,9 +1168,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
      * Re-derives the spatial state of a tile from a bounding volume measured on its content.
      * The serialized tile stays unchanged; only the runtime state uses the measured volume.
      */
-    private refineTileBoundingVolume(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>, boundingVolume: IBoundingVolume): void {
+    private refineTileBoundingVolume(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>, measured: () => IBoundingVolume): void {
+        node.contentBounds = measured;
         node.spatial = this.adapter.spatial.derive({
-            tile: { ...node.source, boundingVolume },
+            tile: { ...node.source, boundingVolume: measured() },
             ...(node.parent ? { parent: node.parent.spatial } : {}),
         });
         node.contentBoundsRefined = true;
@@ -1173,6 +1195,25 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             });
             this.events.emit({ type: "tile-bounds-refined", tile: child, origin: "parent-content" });
         }
+    }
+
+    /** Derives every tile again, parents first, after a change of the vertical scale. */
+    private refreshSpatialStates(): void {
+        this.spatialStale = false;
+        const visit = (node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): void => {
+            const boundingVolume =
+                node.contentBounds?.() ??
+                (node.implicit && this.implicitResolver(node.implicit.context)
+                    ? this.createImplicitTileSource(node.implicit, node.document).boundingVolume
+                    : node.source.boundingVolume);
+            node.spatial = this.adapter.spatial.derive({
+                tile: { ...node.source, boundingVolume },
+                ...(node.parent ? { parent: node.parent.spatial } : {}),
+            });
+            this.events.emit({ type: "tile-bounds-refined", tile: node, origin: "vertical-scale" });
+            for (const child of node.children) visit(child);
+        };
+        if (this.root) visit(this.root);
     }
 
     private refreshNodeReadiness(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): void {

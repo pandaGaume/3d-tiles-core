@@ -14,7 +14,11 @@ export type RuntimeEvent<TSpatial, TContentHandle, TGlyphHandle> =
      * The tile spatial state was re-derived: from a volume measured on its own content (`content`), or from the
      * implicit resolver again once the parent content became ready (`parent-content`).
      */
-    | { type: "tile-bounds-refined"; tile: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>; origin: "content" | "parent-content" }
+    | {
+          type: "tile-bounds-refined";
+          tile: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>;
+          origin: "content" | "parent-content" | "vertical-scale";
+      }
     | {
           type: "content-state";
           tile: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>;

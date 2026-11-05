@@ -65,6 +65,8 @@ The geodesy package owns ellipsoids, geodetic to ECEF conversion and local ENU o
 
 ## UTM extents
 
+A scene shares one `VerticalScale`: pass it to the runtime, and to the metric of objects with `vertical: { scale, frame: radialVerticalFrame(reference) }`. See [Vertical scale](../../../docs/celestial-tiling.md#vertical-scale).
+
 `EcefSpatialMetric` places tiles whose bounding volume carries the `SPACEXR_bounding_volume_utm` extension. The UTM extent takes precedence over any standard fallback volume. It is inverted with the `@spacexr/geodesy` transverse Mercator projection on the ellipsoid of its datum, transformed to the metric geodetic system, then converted to ECEF.
 
 Every approximation widens the bounds and is reported in `IEcefSpatialState.utmPlacement`:

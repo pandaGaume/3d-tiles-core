@@ -178,7 +178,7 @@ A jump of two levels can only remain while the neighbour's children load, either
 
 Diagonal neighbours do not constrain a tile, because tile corners exist at every level. Neighbours follow the `TileNeighbor` layout of `@spacexr/tiles`. When the implicit resolver implements `addressOf`, as `ImplicitTilesetDecorator` does, tiles are located in the pyramid shared by several implicit tilesets and balanced across their roots; `wrapX` also connects the antimeridian of a global pyramid. Otherwise each implicit tileset is balanced on its own coordinates. Explicit tilesets have no neighbour definition and are not balanced.
 
-A tile that the balance must refine, and whose children are not ready, keeps its displayed descendants only when they cover every visible part of it. Otherwise it falls back to a ready tile like any other refinement: an edge waiting for its balance, reported in `unbalanced`, is better than an empty part of the view.
+With the `fillGaps` option, which the cube index uses, a tile that the balance must refine, and whose children are not ready, keeps its displayed descendants only when they cover every visible part of it. Otherwise it falls back to a ready tile like any other refinement: an edge waiting for its balance, reported in `unbalanced`, is better than an empty part of the view.
 
 ### Turning the camera
 
