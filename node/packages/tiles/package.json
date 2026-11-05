@@ -20,6 +20,8 @@
         "tms",
         "quadkey",
         "web-mercator",
+        "cube-sphere",
+        "planetary",
         "spacexr"
     ],
     "engines": {
@@ -45,6 +47,11 @@
             "types": "./dist/addressing/index.d.ts",
             "import": "./dist/addressing/index.js",
             "default": "./dist/addressing/index.js"
+        },
+        "./cube": {
+            "types": "./dist/cube/index.d.ts",
+            "import": "./dist/cube/index.js",
+            "default": "./dist/cube/index.js"
         },
         "./pyramid": {
             "types": "./dist/pyramid/index.d.ts",

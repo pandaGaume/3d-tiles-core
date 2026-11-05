@@ -26,10 +26,11 @@ export class TileUrlTemplateError extends Error {
  * - `{x}`: column, growing eastward.
  * - `{y}`: XYZ row, growing southward.
  * - `{-y}`: TMS row, growing northward.
- * - `{quadkey}`: Bing Maps quadkey.
+ * - `{quadkey}`: Bing Maps quadkey, within the face.
+ * - `{face}`: face of the cube index, 0 for single-root pyramids.
  * - `{s}`: subdomain, chosen as `subdomains[(x + y) % subdomains.length]` so a tile always maps to the same host.
  */
-export const BUILT_IN_TILE_URL_VARIABLES: readonly string[] = ["z", "lod", "level", "x", "y", "-y", "quadkey", "s"];
+export const BUILT_IN_TILE_URL_VARIABLES: readonly string[] = ["z", "lod", "level", "x", "y", "-y", "quadkey", "face", "s"];
 
 const VARIABLE_PATTERN = /\{(-?[A-Za-z_][A-Za-z0-9_]*)\}/g;
 
@@ -82,6 +83,8 @@ export function expandTileUrlTemplate(template: string, address: ITileAddress, o
                 return String(toTmsY(address.y, address.lod));
             case "quadkey":
                 return tileAddressToQuadkey(address);
+            case "face":
+                return String(address.face ?? 0);
             case "s": {
                 const subdomains = options.subdomains!;
                 return subdomains[(address.x + address.y) % subdomains.length]!;

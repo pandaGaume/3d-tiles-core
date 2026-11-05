@@ -4,7 +4,7 @@ Rules shared by every implementation of the web tile layer (`@spacexr/tiles` for
 
 ## Addressing
 
-- A tile address is `(lod, x, y)` in the XYZ convention: level 0 has one tile, `x` grows eastward and `y` grows southward from the north-west corner. Level `lod` has `2^lod` tiles per axis.
+- A tile address is `(lod, x, y)` in the XYZ convention, with a `face` for pyramids of several roots such as the [cube index](celestial-tiling.md#tiles): level 0 has one tile, `x` grows eastward and `y` grows southward from the north-west corner. Level `lod` has `2^lod` tiles per axis.
 - TMS rows grow northward: `y_tms = 2^lod - 1 - y_xyz`. The conversion is its own inverse.
 - A Bing Maps quadkey has one digit per level, from the coarsest: `digit = x_bit + 2 * y_bit`. Level 0 is the empty string.
 - Children of `(lod, x, y)` are `(lod + 1, 2x + i, 2y + j)` for `i, j` in `{0, 1}`, ordered north-west, north-east, south-west, south-east.
@@ -33,15 +33,16 @@ EPSG:3857 with latitudes clamped to plus or minus 85.0511287798066 degrees.
 
 ## URL templates
 
-| Variable                  | Value                             |
-| ------------------------- | --------------------------------- |
-| `{z}`, `{lod}`, `{level}` | level of detail                   |
-| `{x}`                     | column                            |
-| `{y}`                     | XYZ row                           |
-| `{-y}`                    | TMS row                           |
-| `{quadkey}`               | Bing Maps quadkey                 |
-| `{s}`                     | `subdomains[(x + y) mod n]`       |
-| `{name}`                  | application variable, URI-encoded |
+| Variable                  | Value                                              |
+| ------------------------- | -------------------------------------------------- |
+| `{z}`, `{lod}`, `{level}` | level of detail                                    |
+| `{x}`                     | column                                             |
+| `{y}`                     | XYZ row                                            |
+| `{-y}`                    | TMS row                                            |
+| `{quadkey}`               | Bing Maps quadkey, within the face                 |
+| `{face}`                  | face of the cube index, 0 for single-root pyramids |
+| `{s}`                     | `subdomains[(x + y) mod n]`                        |
+| `{name}`                  | application variable, URI-encoded                  |
 
 An unknown variable, `{s}` without subdomains, or an application variable named like a built-in one is an error raised when the source is created. The subdomain choice is deterministic so that a tile is always requested from the same host, which preserves HTTP caching.
 

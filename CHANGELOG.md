@@ -19,6 +19,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Standard implicit QUADTREE and OCTREE traversal, sparse subtree availability, JSON and binary subtree codecs, and XYZ or TMS Web Map pyramid adaptation.
 - Budgeted LRU navigation cache for renderables, subtree payloads and materialized implicit branches.
 - Terrarium elevation encoding in `@spacexr/dem`: `terrariumPixel` and `encodeTerrariumGrid` turn metre heights into raw RGBA pixels at a step of 1/256 metre, keep NoData distinct from the lowest height, and reject heights out of range.
+- Cube index in `@spacexr/tiles/cube`: `CubeFace` and the equi-angular mapping, the tile of a direction, neighbours across faces with their quarter turns, the corners of 3 tiles, planetocentric directions, `ReferenceSurface` with triaxial radii and radial heights, and the geometric error of a tile. Tile addresses take an optional `face`, kept by parents and children, and URL templates the `{face}` variable, now a built-in name.
 - Celestial tiling specification: an equi-angular cube index covering whole bodies, poles included, with its face edge table, triaxial reference surfaces, radial terrain heights, layers in other schemes and a dataset descriptor for tile services.
 - Optional real-time runtime statistics, metric aggregation, cache events and eviction hooks.
 - External `@spacexr/geodesy` integration for ellipsoid-aware ECEF regions and horizon culling.
