@@ -5,4 +5,5 @@ export * from "./metrics";
 export * from "./standard-subtree-loader";
 export * from "./tile-data-source";
 export * from "./types";
+export * from "./cube-source";
 export * from "./web-map";

@@ -2,7 +2,7 @@
 
 Rules shared by every implementation that tiles a celestial body, the Earth, the Moon, Mars or any other: the Node.js packages, future .NET and C++ equivalents, and the tile services that produce the data. Web Mercator stops at 85.05 degrees and leaves the poles out; this specification covers the whole body with one tiling, independent of its shape and size.
 
-Status: the cube index, its neighbours and the reference surface are implemented in `@spacexr/tiles`; the other parts are not implemented yet. [Responsibilities](#responsibilities) lists where each part lives.
+Status: the cube index, its neighbours, the reference surface, datasets, radial DEMs and cube tilesets are implemented in the Node packages; layers in other schemes are not implemented yet. [Responsibilities](#responsibilities) lists where each part lives.
 
 ## Three geometries
 

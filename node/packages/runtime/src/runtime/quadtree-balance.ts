@@ -1,4 +1,11 @@
-import { TILE_EDGE_NEIGHBORS, ancestorTileAddress, tileNeighborAddress } from "@spacexr/tiles";
+import {
+    TILE_EDGE_NEIGHBORS,
+    ancestorTileAddress,
+    tileAddressKey,
+    tileNeighborAddress,
+    type ITileTopology,
+    type TileEdgeNeighbor,
+} from "@spacexr/tiles";
 
 import type { ITileAddress } from "../implicit/tile-data-source";
 
@@ -9,10 +16,18 @@ export interface IQuadtreeTileLocation {
     address: ITileAddress;
     /** Wraps columns around the antimeridian, for pyramids covering every longitude. */
     wrapX: boolean;
+    /** How the tiles connect, for example across the faces of the cube index, in place of `wrapX`. */
+    topology?: ITileTopology;
+}
+
+/** Neighbour of a located tile across an edge. */
+function edgeNeighbor(location: IQuadtreeTileLocation, edge: TileEdgeNeighbor): ITileAddress | undefined {
+    const { address, topology, wrapX } = location;
+    return topology ? topology.neighbor(address, edge)?.address : tileNeighborAddress(address, edge, { wrapX });
 }
 
 export function quadtreeTileKey(namespace: string, address: ITileAddress): string {
-    return `${namespace}${address.lod}/${address.x}/${address.y}`;
+    return `${namespace}${tileAddressKey(address)}`;
 }
 
 /** A displayed tile next to a displayed tile two or more levels coarser. */
@@ -32,10 +47,10 @@ export function quadtreeImbalances<T>(displayed: Iterable<{ location: IQuadtreeT
     const keys = new Set(entries.map(({ location }) => quadtreeTileKey(location.namespace, location.address)));
     const imbalances: IQuadtreeImbalance<T>[] = [];
     for (const { location, value } of entries) {
-        const { namespace, address, wrapX } = location;
+        const { namespace } = location;
         let coarseLod: number | undefined;
         for (const edge of TILE_EDGE_NEIGHBORS) {
-            const neighbor = tileNeighborAddress(address, edge, { wrapX });
+            const neighbor = edgeNeighbor(location, edge);
             if (!neighbor) continue;
             for (let levels = 2; levels <= neighbor.lod; levels++) {
                 const ancestor = ancestorTileAddress(neighbor, levels);
@@ -59,10 +74,11 @@ export function quadtreeImbalances<T>(displayed: Iterable<{ location: IQuadtreeT
  */
 export function quadtreeBalanceRefinements(displayed: Iterable<IQuadtreeTileLocation>): Set<string> {
     const refinements = new Set<string>();
-    for (const { namespace, address, wrapX } of displayed) {
+    for (const location of displayed) {
+        const { namespace, address } = location;
         if (address.lod < 2) continue;
         for (const edge of TILE_EDGE_NEIGHBORS) {
-            const neighbor = tileNeighborAddress(address, edge, { wrapX });
+            const neighbor = edgeNeighbor(location, edge);
             if (!neighbor) continue;
             for (let levels = 2; levels <= neighbor.lod; levels++) {
                 const key = quadtreeTileKey(namespace, ancestorTileAddress(neighbor, levels));

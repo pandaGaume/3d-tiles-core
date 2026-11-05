@@ -10,6 +10,8 @@ import type {
 import type { ITileMetrics } from "./metrics";
 
 export interface ITileAddress {
+    /** Root of the address on a pyramid of several roots, such as the cube index; omitted for face 0. */
+    face?: number;
     lod: number;
     x: number;
     y: number;
@@ -32,7 +34,7 @@ export interface ITileDataSourceTile {
  */
 export interface ITileDataSource {
     readonly id: string;
-    readonly metrics: ITileMetrics;
+    readonly metrics: Pick<ITileMetrics, "minLOD" | "maxLOD">;
     readonly rootAddress: ITileAddress;
     readonly urlTemplates: readonly string[];
     addressOf(coordinates: IImplicitCoordinates): ITileAddress;

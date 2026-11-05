@@ -77,6 +77,7 @@ import {
     type IQuadtreeImbalance,
     type IQuadtreeTileLocation,
 } from "./quadtree-balance";
+import type { ITileTopology } from "@spacexr/tiles";
 
 export interface ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHandle> {
     id: string;
@@ -151,6 +152,8 @@ const BALANCE_LOAD_PRIORITY = Number.MAX_SAFE_INTEGER;
 export interface IQuadtreeBalanceOptions {
     /** Wraps columns around the antimeridian for addresses from `IImplicitTileResolver.addressOf`. Defaults to false. */
     wrapX?: boolean;
+    /** How addresses from `IImplicitTileResolver.addressOf` connect, for example across cube faces, in place of `wrapX`. */
+    topology?: ITileTopology;
 }
 
 interface IContentCacheEntry<TSpatial, TContentHandle, TGlyphHandle> {
@@ -180,7 +183,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     private readonly coarseningDelayFrames: number;
     /** Frame since which each refined tile no longer requires its refinement. */
     private readonly coarseningSince = new Map<string, number>();
-    private readonly quadtreeBalance: Required<IQuadtreeBalanceOptions> | undefined;
+    private readonly quadtreeBalance: IQuadtreeBalanceOptions | undefined;
     /** Keys of the tiles that must refine to keep the quadtree balanced in the current frame. */
     private balanceRefinements = new Set<string>();
     /** Tiles whose refinement waits in the current frame, because a neighbour cannot follow yet. */
@@ -247,7 +250,12 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         this.clock = options.clock ?? (() => performance.now());
         this.frameTimes.set(0, this.clock());
         this.quadtreeBalance = options.quadtreeBalance
-            ? { wrapX: typeof options.quadtreeBalance === "object" && options.quadtreeBalance.wrapX === true }
+            ? {
+                  wrapX: typeof options.quadtreeBalance === "object" && options.quadtreeBalance.wrapX === true,
+                  ...(typeof options.quadtreeBalance === "object" && options.quadtreeBalance.topology
+                      ? { topology: options.quadtreeBalance.topology }
+                      : {}),
+              }
             : undefined;
         this.maxLoadAttempts = Math.max(1, Math.floor(options.maxLoadAttempts ?? 3));
         this.cacheOptions = resolveRuntimeCacheOptions(options.cache);
@@ -643,7 +651,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             implicitTiling: context.implicitTiling,
             coordinates,
         });
-        if (address) return { namespace: "", address, wrapX: this.quadtreeBalance.wrapX };
+        if (address) {
+            const { wrapX = false, topology } = this.quadtreeBalance;
+            return { namespace: "", address, wrapX, ...(topology ? { topology } : {}) };
+        }
         // Without a shared pyramid, each implicit tileset is balanced on its own coordinates.
         return { namespace: `${context.id}:`, address: { lod: coordinates.level, x: coordinates.x, y: coordinates.y }, wrapX: false };
     }
