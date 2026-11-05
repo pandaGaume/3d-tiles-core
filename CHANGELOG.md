@@ -58,6 +58,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- Quadtree balance no longer leaves holes in the view: a tile it must refine, whose children were not ready, kept any displayed descendant, even one covering a corner of it, and the rest stayed empty until the children loaded. It now keeps them only when they cover the visible part of the tile, and falls back to a ready tile otherwise.
 - Tiles seen before load again after zooming out and in: a cancelled load no longer counts against `maxLoadAttempts`, and the contents of an activation cancelled before it started return to the idle state instead of staying queued forever.
 - The children of a refined tile are requested together instead of one after another.
 

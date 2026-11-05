@@ -545,7 +545,14 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             // A refinement required by the quadtree balance keeps the finer
             // descendants already displayed: falling back to a coarser ready
             // tile would display it next to a tile two or more levels finer.
-            if (balanceRequested && this.stableReplacementCut && this.retainVisibleSelectedDescendants(node, camera, desired)) return;
+            // Unless they leave part of the tile empty, which is worse than an edge waiting for its balance.
+            if (
+                balanceRequested &&
+                this.stableReplacementCut &&
+                this.selectedDescendantsCover(node, camera) &&
+                this.retainVisibleSelectedDescendants(node, camera, desired)
+            )
+                return;
             // A ready ancestor provides complete coverage for every visible
             // child branch. Previously selected descendants are retained only
             // when no such ancestor is currently available.
@@ -770,6 +777,16 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             candidate = candidate.parent;
         }
         return false;
+    }
+
+    /** Whether the tiles selected at the start of the frame cover every visible part of a tile. */
+    private selectedDescendantsCover(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>, camera: TCamera): boolean {
+        const selected = new Set(this.selectedAtFrameStart);
+        const covered = (tile: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): boolean => {
+            if (selected.has(tile) || !this.adapter.spatial.isVisible(tile.spatial, camera)) return true;
+            return tile.children.length > 0 && tile.children.every(covered);
+        };
+        return node.children.length > 0 && node.children.every(covered);
     }
 
     private retainVisibleSelectedDescendants(
