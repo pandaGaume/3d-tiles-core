@@ -1,5 +1,6 @@
 import { assertValidTileAddress, tileCount, type ITileAddress } from "../addressing/tile-address";
 import { TILE_CORNER_EDGES, TileNeighbor, tileNeighborOffset, type TileCornerNeighbor, type TileEdgeNeighbor } from "../addressing/tile-neighbors";
+import type { ITileAreaAcross, ITileTopology } from "../addressing/tile-topology";
 import { CubeFace } from "./cube-face";
 
 /** Edges in quarter-turn order, as used by {@link turnTileEdge}. */
@@ -163,3 +164,52 @@ export function cubeCornerTileCount(address: ITileAddress, corner: TileCornerNei
     const onColumn = horizontal === TileNeighbor.W ? address.x === 0 : address.x === count - 1;
     return onRow && onColumn ? 3 : 4;
 }
+
+/** Corner of a tile that `turnedTileCoordinates` sends to `(0, 0)`, per number of quarter turns. */
+const TURNED_ORIGIN: ReadonlyArray<readonly [number, number]> = [
+    [0, 0],
+    [0, 1],
+    [1, 1],
+    [1, 0],
+];
+
+/**
+ * Area of a tile of the cube index in another tile, across at most one face edge; see {@link ITileAreaAcross}.
+ *
+ * The neighbouring face is unfolded around the edge the two faces share, a rigid motion, so the points of that edge
+ * land exactly on the same directions.
+ *
+ * @throws RangeError When an address is invalid or the tiles lie on opposite faces.
+ */
+export function cubeTileAreaIn(address: ITileAddress, other: ITileAddress): ITileAreaAcross {
+    assertValidTileAddress(address);
+    assertValidTileAddress(other);
+    const face: CubeFace = address.face ?? 0;
+    const otherFace: CubeFace = other.face ?? 0;
+    const scale = 2 ** (address.lod - other.lod);
+    const size = 1 / scale;
+    if (face === otherFace) return { west: address.x / scale - other.x, north: address.y / scale - other.y, size, turns: 0 };
+
+    const edge = EDGE_ORDER.find((candidate) => CUBE_FACE_EDGES[face]![candidate].face === otherFace);
+    if (edge === undefined) throw new RangeError(`Faces ${face} and ${otherFace} are opposite: their tiles cannot touch.`);
+    const junction = CUBE_FACE_EDGES[face]![edge];
+    // The corner of the tile at the origin of the turned frame.
+    const [cornerU, cornerV] = TURNED_ORIGIN[junction.turns]!;
+    const count = tileCount(address.lod);
+    const u = (address.x + cornerU) / count;
+    const v = (address.y + cornerV) / count;
+    const along = edge === TileNeighbor.N || edge === TileNeighbor.S ? u : v;
+    const beyond = edge === TileNeighbor.N ? -v : edge === TileNeighbor.S ? v - 1 : edge === TileNeighbor.W ? -u : u - 1;
+    const alongOther = junction.reversed ? 1 - along : along;
+    let otherU = alongOther;
+    let otherV = alongOther;
+    if (junction.edge === TileNeighbor.N) otherV = beyond;
+    else if (junction.edge === TileNeighbor.S) otherV = 1 - beyond;
+    else if (junction.edge === TileNeighbor.W) otherU = beyond;
+    else otherU = 1 - beyond;
+    const otherCount = tileCount(other.lod);
+    return { west: otherU * otherCount - other.x, north: otherV * otherCount - other.y, size, turns: junction.turns };
+}
+
+/** Topology of the cube index: neighbours across faces, turned, and corners of 3 tiles. */
+export const CUBE_TILE_TOPOLOGY: ITileTopology = Object.freeze({ neighbor: cubeTileNeighbor, areaIn: cubeTileAreaIn });

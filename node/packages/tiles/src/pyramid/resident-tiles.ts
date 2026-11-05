@@ -1,14 +1,10 @@
-import type { ITileAddress } from "../addressing/tile-address";
+import { tileAddressKey as key, type ITileAddress } from "../addressing/tile-address";
 import { tileAreaInAncestor, type ITileAreaInAncestor } from "./tile-pyramid";
 
 /** Resident tile covering a requested tile, with the part of it the requested tile covers. */
 export interface IResidentTileCover<T> extends ITileAreaInAncestor {
     /** Value stored for `ancestor`, the resident tile. */
     value: T;
-}
-
-function key(address: ITileAddress): string {
-    return `${address.lod}/${address.x}/${address.y}`;
 }
 
 interface IResidentEntry<T> {
@@ -76,7 +72,7 @@ export class ResidentTiles<T> {
         let depth: number | undefined;
         for (const { address: resident } of this.entries.values()) {
             const levels = resident.lod - address.lod;
-            if (levels < 0 || levels > maxLevels || (depth !== undefined && levels <= depth)) continue;
+            if ((resident.face ?? 0) !== (address.face ?? 0) || levels < 0 || levels > maxLevels || (depth !== undefined && levels <= depth)) continue;
             const scale = 2 ** levels;
             if (Math.floor(resident.x / scale) === address.x && Math.floor(resident.y / scale) === address.y) depth = levels;
         }

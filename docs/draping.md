@@ -6,9 +6,9 @@ Rules shared by every implementation that drapes raster pyramids, such as satell
 
 A renderer binds the pages of one pyramid to the tiles of the other. Two engines are specified; they share the page pyramid, the residency index and the GPU page pool, and differ in their render unit.
 
-| Engine         | Render unit  | Bound pages                                                              | Geometry                                   |
-| -------------- | ------------ | ------------------------------------------------------------------------ | ------------------------------------------ |
-| Mesh draping   | terrain tile | `4^k` imagery pages, one per cell, `k` set per tile by the imagery cut   | CPU meshes, as built today                 |
+| Engine         | Render unit                                         | Bound pages                                                                | Geometry                                        |
+| -------------- | --------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------- |
+| Mesh draping   | terrain tile                                        | `4^k` imagery pages, one per cell, `k` set per tile by the imagery cut     | CPU meshes, as built today                      |
 | GPU instancing | leaf of the instance cut, the finer of the two cuts | one imagery page, and the elevation page of the terrain tile containing it | one shared grid instanced, displaced on the GPU |
 
 Both engines remain available behind the same runtimes, pages and residency index; a renderer selects one.
@@ -48,6 +48,7 @@ The mesh draping engine builds a mesh per terrain tile on the CPU: DEM sampling,
 - The instances are the leaves of the union of the terrain cut and the imagery cut. Inside each presented terrain tile, the imagery tiles of the cut below it are instances, completed with the tiles needed to cover the terrain tile without overlap; a terrain tile without finer imagery is one instance. An instance is never coarser than its terrain tile.
 - A level below a terrain tile stays in the instance cut for a hold time after the imagery cut stopped reaching it, 500 ms by default, for the reason given for the drape depth.
 - The leaves are balanced across edges: a leaf whose edge neighbour is subdivided two levels deeper or more is split into its four children, until every edge joins leaves at most one level apart. Columns wrap around the antimeridian. Corners are not balanced: corner vertices exist at every level.
+- Neighbours follow the topology of the pyramid. On the [cube index](celestial-tiling.md#neighbours-across-faces), the tiles across a face edge are read in their own turned frame, and at the 8 vertices of the cube a corner touches 3 tiles instead of 4. Reading the DEM of a tile on another face turns the coordinates of the instance: the area of an instance in a tile holds `west`, `north`, `size` and the quarter turns, and only the points the two tiles share lie inside it.
 - Each instance knows, for each edge, whether the instances across it are one level coarser, one level finer or of its level, and, for each edge and each corner, the terrain tile whose DEM gives the heights there: the coarsest terrain tile among the instances touching that edge or corner, its own on ties.
 
 ### Geometry

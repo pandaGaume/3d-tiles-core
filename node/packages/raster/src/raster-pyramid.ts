@@ -1,7 +1,7 @@
 import { TileNeighbor, TilePyramid, parentTileAddress, tileNeighborAddress, type ITileAddress, type ITileAreaInAncestor, type ITilePyramidOptions } from "@spacexr/tiles";
 
 import type { IRasterGrid } from "./raster-grid";
-import { generateChildRaster, type RasterInterpolation } from "./resampling";
+import { generateChildRaster, generatePointChildRaster, type RasterInterpolation } from "./resampling";
 import { rasterRangeInArea, sampleRasterBilinear, type IRasterRange } from "./sampling";
 import { StitchedRasterGrids, type RasterGridFactory } from "./stitched-raster-grids";
 
@@ -20,6 +20,12 @@ export interface IRasterPyramidOptions<TGrid extends IRasterGrid> extends Omit<I
      * generation by generation.
      */
     generation?: IRasterGenerationOptions;
+    /**
+     * Source tiles already hold their shared edges, `(w + 1) x (h + 1)` samples in `point` registration, as a tile
+     * service of the cube index produces them. Neighbours are neither loaded nor read, and generated levels interpolate
+     * their parent bilinearly. Defaults to false.
+     */
+    prestitched?: boolean;
 }
 
 export interface IRasterGenerationOptions {
@@ -60,7 +66,7 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
     private readonly stitchedListeners = new Set<(changed: readonly ITileAddress[]) => void>();
 
     public constructor(options: IRasterPyramidOptions<TGrid>) {
-        const { create, onStitched, generation, ...pyramid } = options;
+        const { create, onStitched, generation, prestitched = false, ...pyramid } = options;
         this.sourceMaxLOD = pyramid.maxLOD;
         if (generation && (!Number.isInteger(generation.maxLOD) || generation.maxLOD < pyramid.maxLOD)) {
             throw new RangeError("The generated levels must reach at least the source maxLOD.");
@@ -68,12 +74,15 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
         const interpolation = generation?.interpolation ?? "bilinear";
         this.wrapX = options.wrapX ?? false;
         this.onStitched = onStitched;
-        this.stitched = new StitchedRasterGrids<TGrid>({ wrapX: this.wrapX, ...(create ? { create } : {}) });
+        this.stitched = new StitchedRasterGrids<TGrid>({ wrapX: this.wrapX, prestitched, ...(create ? { create } : {}) });
         this.tiles = new TilePyramid({
             ...pyramid,
             maxLOD: generation?.maxLOD ?? pyramid.maxLOD,
-            load: (address) => (address.lod <= this.sourceMaxLOD ? pyramid.load(address) : this.generate(address, interpolation)),
-            prefetch: [TileNeighbor.E, TileNeighbor.S, TileNeighbor.SE],
+            load: (address) => {
+                if (address.lod <= this.sourceMaxLOD) return pyramid.load(address);
+                return prestitched ? this.generatePoint(address) : this.generate(address, interpolation);
+            },
+            prefetch: prestitched ? [] : [TileNeighbor.E, TileNeighbor.S, TileNeighbor.SE],
             onLoad: (address, grid) => this.notifyStitched(this.stitched.add(address, grid)),
             onEvict: (address) => this.stitched.delete(address),
         });
@@ -152,8 +161,10 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
     /**
      * Value at a point of the pyramid from the loaded rasters of a tile level, or `NaN` when no raster containing
      * the point is loaded. On a tile edge, either side gives the same value.
+     *
+     * @param face - Face of the point on the cube index, whose coordinates `x` and `y` run over that face. Defaults to 0.
      */
-    public sampleAt(x: number, y: number, lod: number, channel = 0): number {
+    public sampleAt(x: number, y: number, lod: number, channel = 0, face = 0): number {
         const sourceLod = this.sourceLevel(lod);
         const count = 2 ** sourceLod;
         const column = x * count;
@@ -164,7 +175,7 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
             if (tileRow < 0 || tileRow >= count) continue;
             for (const tileColumn of columns) {
                 if (!this.wrapX && (tileColumn < 0 || tileColumn >= count)) continue;
-                const grid = this.stitched.get({ lod: sourceLod, x: ((tileColumn % count) + count) % count, y: tileRow });
+                const grid = this.stitched.get({ face, lod: sourceLod, x: ((tileColumn % count) + count) % count, y: tileRow });
                 if (grid) return sampleRasterBilinear(grid, column - tileColumn, row - tileRow, channel, "point");
             }
         }
@@ -174,6 +185,13 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
     private notifyStitched(changed: readonly ITileAddress[]): void {
         this.onStitched?.(changed);
         for (const listener of this.stitchedListeners) listener(changed);
+    }
+
+    /** Generates a tile below the source levels from its parent, which holds its shared edges. */
+    private async generatePoint(address: ITileAddress): Promise<IRasterGrid<TGrid["data"]> | undefined> {
+        const parent = parentTileAddress(address)!;
+        const region = await this.tiles.load(parent);
+        return region && generatePointChildRaster(region.content, address.x - parent.x * 2, address.y - parent.y * 2);
     }
 
     /** Generates a tile below the source levels from its parent and the neighbours of its parent. */

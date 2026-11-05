@@ -1,4 +1,4 @@
-import { TileNeighbor, tileNeighborAddress, type ITileAddress, type ITileNeighborOptions } from "@spacexr/tiles";
+import { TileNeighbor, tileAddressKey as key, tileNeighborAddress, type ITileAddress, type ITileNeighborOptions } from "@spacexr/tiles";
 
 import { allocateLike, createRasterGrid, type IRasterGrid } from "./raster-grid";
 
@@ -8,10 +8,11 @@ export type RasterGridFactory<TGrid extends IRasterGrid> = (width: number, heigh
 export interface IStitchedRasterGridsOptions<TGrid extends IRasterGrid> extends ITileNeighborOptions {
     /** Builds each stitched grid. Defaults to a plain {@link IRasterGrid}. */
     create?: RasterGridFactory<TGrid>;
-}
-
-function key(address: ITileAddress): string {
-    return `${address.lod}/${address.x}/${address.y}`;
+    /**
+     * Tiles already hold their shared edges: `(w + 1) x (h + 1)` samples in `point` registration, as a tile service of
+     * the cube index produces them. Nothing is taken from the neighbours. Defaults to false.
+     */
+    prestitched?: boolean;
 }
 
 interface IStitchedEntry<TGrid extends IRasterGrid> {
@@ -69,6 +70,20 @@ export class StitchedRasterGrids<TGrid extends IRasterGrid = IRasterGrid> {
      * @throws RangeError When a neighbour already present has a different size or number of channels.
      */
     public add(address: ITileAddress, grid: IRasterGrid<TGrid["data"]>): ITileAddress[] {
+        if (this.options.prestitched) {
+            if (grid.width < 2 || grid.height < 2) throw new RangeError("A prestitched raster holds at least 2 x 2 samples.");
+            const stitched = this.create(grid.width, grid.height, grid.channels, grid.data);
+            const own: IStitchedEntry<TGrid> = {
+                address: { ...address },
+                data: grid.data,
+                width: grid.width - 1,
+                height: grid.height - 1,
+                channels: grid.channels,
+                grid: stitched,
+            };
+            this.entries.set(key(address), own);
+            return [own.address];
+        }
         const { width, height, channels } = grid;
         const rowLength = width * channels;
         const stitchedRowLength = (width + 1) * channels;

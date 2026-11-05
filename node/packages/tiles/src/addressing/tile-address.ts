@@ -31,6 +31,15 @@ export function formatTileAddress(address: ITileAddress): string {
     return address.face === undefined ? path : `${address.face}/${path}`;
 }
 
+/**
+ * Key of a tile within a pyramid: `lod/x/y`, prefixed by the face when it is not 0, so that an address without a face
+ * and an address on face 0 are the same tile. Keys are ephemeral: they are not stable identifiers.
+ */
+export function tileAddressKey(address: ITileAddress): string {
+    const path = `${address.lod}/${address.x}/${address.y}`;
+    return address.face ? `${address.face}/${path}` : path;
+}
+
 /** Number of tiles along one axis at a level of detail. */
 export function tileCount(lod: number): number {
     return 2 ** lod;
