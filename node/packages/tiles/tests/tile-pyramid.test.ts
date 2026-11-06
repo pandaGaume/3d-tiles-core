@@ -21,6 +21,18 @@ describe("tileAreaInAncestor", () => {
 });
 
 describe("TilePyramid", () => {
+    it("serves a tile from the deepest level at its place, in a pyramid of varying depth", async () => {
+        const { loads, load } = recordingLoader();
+        const pyramid = new TilePyramid({ load, maxLOD: 4, servingLevel: (address) => (address.x < 2 ** (address.lod - 1) ? address.lod : Math.min(address.lod, 1)) });
+        expect(pyramid.areaOf({ lod: 3, x: 1, y: 0 }).ancestor).toEqual({ lod: 3, x: 1, y: 0 });
+        expect(pyramid.areaOf({ lod: 3, x: 6, y: 0 })).toEqual({ ancestor: { lod: 1, x: 1, y: 0 }, west: 0.5, north: 0, size: 0.25 });
+        // Never deeper than the pyramid.
+        expect(pyramid.areaOf({ lod: 6, x: 0, y: 0 }).ancestor.lod).toBe(4);
+        const region = await pyramid.load({ lod: 3, x: 6, y: 0 });
+        expect(region?.content).toBe("1/1/0");
+        expect(loads).toEqual(["1/1/0"]);
+    });
+
     it("loads each tile once and serves deeper tiles from their ancestor", async () => {
         const { loads, load } = recordingLoader();
         const pyramid = new TilePyramid({ load, maxLOD: 2 });

@@ -97,6 +97,7 @@ const runtime = new TileRuntime({
   cache: {
     maxMaterializedTiles: 4096,
     maxContentEntries: 4096,
+    workingSetFactor: 3,
     maxContentCpuBytes: 512 * 1024 * 1024,
     maxContentGpuBytes: 1024 * 1024 * 1024,
     maxSubtreeEntries: 128,
@@ -105,6 +106,8 @@ const runtime = new TileRuntime({
   },
 });
 ```
+
+`workingSetFactor` makes the budgets of entries and tiles adaptive: they are at least that many times what the view uses, the selected tiles for content and the tiles visited by the traversal for materialized tiles, so that a moving camera does not evict and load the same tiles again and again. They come back as the view needs less. Byte budgets stay fixed. Its default, 0, keeps fixed budgets.
 
 `trimCache()` applies the budgets immediately. `trimCache(true)` releases every inactive cache entry and implicit branch, which is useful after a scene switch or when an application enters the background. Cache evictions are observable through `cache-eviction` events and the `beforeCacheEviction` and `afterCacheEviction` hooks.
 

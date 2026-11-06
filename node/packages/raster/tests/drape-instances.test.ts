@@ -1,7 +1,7 @@
 import { TILE_EDGE_NEIGHBORS, tileNeighborAddress, type ITileAddress } from "@spacexr/tiles";
 import { describe, expect, it } from "vitest";
 
-import { DrapeInstanceCut, DrapeInstanceEdge, type IDrapeInstance } from "../src";
+import { completeTileCover, DrapeInstanceCut, DrapeInstanceEdge, type IDrapeInstance } from "../src";
 
 const tile = (text: string): ITileAddress => {
     const [lod, x, y] = text.split("/").map(Number);
@@ -29,6 +29,36 @@ function largestEdgeGap(instances: readonly IDrapeInstance[]): number {
     }
     return gap;
 }
+
+describe("completeTileCover", () => {
+    const roots = [0, 1].map((face) => ({ face, lod: 0, x: 0, y: 0 }));
+    const area = (tile: { lod: number }): number => 4 ** -tile.lod;
+
+    it("covers what the cut leaves, without overlap", () => {
+        const cut = [{ face: 0, lod: 2, x: 1, y: 1 }];
+        const fill = completeTileCover(cut, roots, () => true);
+        // The other face, the three siblings of level 2 and the three siblings of their parent.
+        expect(fill).toHaveLength(1 + 3 + 3);
+        expect(fill).toContainEqual({ face: 1, lod: 0, x: 0, y: 0 });
+        expect(fill).toContainEqual({ face: 0, lod: 1, x: 1, y: 0 });
+        expect(fill).toContainEqual({ face: 0, lod: 2, x: 0, y: 0 });
+        expect([...cut, ...fill].reduce((sum, tile) => sum + area(tile), 0)).toBe(roots.length);
+        const keys = fill.map((tile) => `${tile.face}/${tile.lod}/${tile.x}/${tile.y}`);
+        expect(new Set(keys).size).toBe(keys.length);
+    });
+
+    it("adds nothing to a complete cut", () => {
+        expect(completeTileCover(roots, roots, () => true)).toEqual([]);
+    });
+
+    it("leaves uncovered what is not available", () => {
+        const fill = completeTileCover([{ face: 0, lod: 1, x: 0, y: 0 }], roots, (tile) => tile.face === 0 && tile.x === 1);
+        expect(fill).toEqual([
+            { face: 0, lod: 1, x: 1, y: 0 },
+            { face: 0, lod: 1, x: 1, y: 1 },
+        ]);
+    });
+});
 
 describe("DrapeInstanceCut", () => {
     it("draws a terrain tile as one instance when the imagery is not finer", () => {

@@ -8,6 +8,13 @@ export interface IRuntimeCacheOptions {
     enabled?: boolean;
     maxMaterializedTiles?: number;
     maxContentEntries?: number;
+    /**
+     * Makes the budgets of entries and tiles adaptive: they grow to this many times what the current view uses, the
+     * selected tiles for `maxContentEntries` and the tiles visited by the traversal for `maxMaterializedTiles`, and come
+     * back as the view needs less. Budgets close to the view make a moving camera evict and load the same tiles again and
+     * again. Byte budgets stay fixed: they bound the memory. Defaults to 0, fixed budgets.
+     */
+    workingSetFactor?: number;
     maxContentCpuBytes?: number;
     maxContentGpuBytes?: number;
     maxSubtreeEntries?: number;
@@ -30,6 +37,7 @@ export interface IResolvedRuntimeCacheOptions {
     enabled: boolean;
     maxMaterializedTiles: number;
     maxContentEntries: number;
+    workingSetFactor: number;
     maxContentCpuBytes: number;
     maxContentGpuBytes: number;
     maxSubtreeEntries: number;
@@ -68,6 +76,7 @@ export const DEFAULT_RUNTIME_CACHE_OPTIONS: IResolvedRuntimeCacheOptions = {
     maxMaterializedTiles: 4096,
     // The byte budgets bound the memory; entries only bound the bookkeeping of many small contents.
     maxContentEntries: 4096,
+    workingSetFactor: 0,
     maxContentCpuBytes: 512 * 1024 * 1024,
     maxContentGpuBytes: 1024 * 1024 * 1024,
     maxSubtreeEntries: 128,
@@ -87,6 +96,7 @@ export function resolveRuntimeCacheOptions(options: IRuntimeCacheOptions | false
         enabled: options?.enabled ?? DEFAULT_RUNTIME_CACHE_OPTIONS.enabled,
         maxMaterializedTiles: resolveBudget(options?.maxMaterializedTiles, DEFAULT_RUNTIME_CACHE_OPTIONS.maxMaterializedTiles),
         maxContentEntries: resolveBudget(options?.maxContentEntries, DEFAULT_RUNTIME_CACHE_OPTIONS.maxContentEntries),
+        workingSetFactor: resolveBudget(options?.workingSetFactor, DEFAULT_RUNTIME_CACHE_OPTIONS.workingSetFactor),
         maxContentCpuBytes: resolveBudget(options?.maxContentCpuBytes, DEFAULT_RUNTIME_CACHE_OPTIONS.maxContentCpuBytes),
         maxContentGpuBytes: resolveBudget(options?.maxContentGpuBytes, DEFAULT_RUNTIME_CACHE_OPTIONS.maxContentGpuBytes),
         maxSubtreeEntries: resolveBudget(options?.maxSubtreeEntries, DEFAULT_RUNTIME_CACHE_OPTIONS.maxSubtreeEntries),

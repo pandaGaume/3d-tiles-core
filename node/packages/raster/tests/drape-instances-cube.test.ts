@@ -17,6 +17,26 @@ import { describe, expect, it } from "vitest";
 
 import { DrapeInstanceCut, DrapeInstanceEdge, type IDrapeInstance } from "../src";
 
+describe("instance cut over data of varying depth", () => {
+    const fine = { face: 0, lod: 2, x: 0, y: 0 };
+    const coarse = { face: 0, lod: 2, x: 1, y: 0 };
+    const edgeTerrains = (options: ConstructorParameters<typeof DrapeInstanceCut>[0]): ITileAddress => {
+        const cut = new DrapeInstanceCut({ topology: CUBE_TILE_TOPOLOGY, ...options });
+        const instance = cut.update([fine, coarse], [], 0).find(({ address }) => address.x === fine.x)!;
+        // Its east edge.
+        return instance.edgeTerrain[1];
+    };
+
+    it("reads the coarsest data on an edge between tiles of one level", () => {
+        expect(edgeTerrains({ terrainDataLevel: (terrain) => (terrain.x === 1 ? 0 : 2) })).toEqual(coarse);
+    });
+
+    it("keeps its own terrain without that option, and when the data has one level", () => {
+        expect(edgeTerrains({})).toEqual(fine);
+        expect(edgeTerrains({ terrainDataLevel: () => 2 })).toEqual(fine);
+    });
+});
+
 /** The six faces at a level, every tile a terrain tile. */
 function allTiles(lod: number): ITileAddress[] {
     const tiles: ITileAddress[] = [];

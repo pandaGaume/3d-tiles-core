@@ -31,6 +31,8 @@ export interface IDrapeInstance {
     address: ITileAddress;
     /** Presented terrain tile containing it, whose DEM tile gives its elevation. */
     terrain: ITileAddress;
+    /** Level of the data of its terrain tile; see {@link IDrapeInstanceCutOptions.terrainDataLevel}. */
+    terrainLevel: number;
     /** Edges whose neighbour instance is one level coarser, a combination of {@link DrapeInstanceEdge} bits. */
     coarserEdges: number;
     /** Edges whose neighbour instances are one level finer, a combination of {@link DrapeInstanceEdge} bits. */
@@ -58,6 +60,11 @@ export interface IDrapeInstanceCutOptions {
     wrapX?: boolean;
     /** How the tiles connect, for example across the faces of the cube index. Defaults to a pyramid with one root. */
     topology?: ITileTopology;
+    /**
+     * Level of the data of a terrain tile, for elevation whose depth varies from place to place: both sides of an edge then
+     * read the coarsest data, not only the coarsest tile. Defaults to the level of the tile.
+     */
+    terrainDataLevel?: (terrain: ITileAddress) => number;
 }
 
 /** Children of a neighbour that touch the tile, in `childTileAddresses` order NW, NE, SW, SE. */
@@ -82,15 +89,46 @@ function childToward(first: TileEdgeNeighbor, second: TileEdgeNeighbor): number 
     return (east ? 1 : 0) + (south ? 2 : 0);
 }
 
-function createInstance(address: ITileAddress, terrain: ITileAddress): IDrapeInstance {
+function createInstance(address: ITileAddress, terrain: ITileAddress, terrainLevel: number): IDrapeInstance {
     return {
         address,
         terrain,
+        terrainLevel,
         coarserEdges: 0,
         finerEdges: 0,
         edgeTerrain: [terrain, terrain, terrain, terrain],
         cornerTerrain: [terrain, terrain, terrain, terrain],
     };
+}
+
+/**
+ * Tiles completing a cut into a cover of its roots: the root of an area no tile of the cut reaches, or the child of a
+ * tile above the cut no tile of the cut reaches. They do not overlap the cut or each other. A renderer draws them where
+ * the selection, computed for a camera that has since moved, left no tile: coarse terrain instead of a hole.
+ *
+ * @param cut - Tiles of the cut, which do not overlap.
+ * @param roots - Roots of the pyramid, such as the six faces of the cube index.
+ * @param isAvailable - Whether a tile can be drawn; an area without an available tile stays uncovered.
+ */
+export function completeTileCover(cut: Iterable<ITileAddress>, roots: readonly ITileAddress[], isAvailable: (address: ITileAddress) => boolean): ITileAddress[] {
+    const leaves = new Set<string>();
+    const inner = new Map<string, ITileAddress>();
+    for (const tile of cut) {
+        leaves.add(key(tile));
+        for (let ancestor = parentTileAddress(tile); ancestor; ancestor = parentTileAddress(ancestor)) {
+            const ancestorKey = key(ancestor);
+            if (inner.has(ancestorKey)) break;
+            inner.set(ancestorKey, ancestor);
+        }
+    }
+    const fill: ITileAddress[] = [];
+    const add = (tile: ITileAddress): void => {
+        const tileKey = key(tile);
+        if (!leaves.has(tileKey) && !inner.has(tileKey) && isAvailable(tile)) fill.push(tile);
+    };
+    for (const root of roots) add(root);
+    for (const tile of inner.values()) for (const child of childTileAddresses(tile)) add(child);
+    return fill;
 }
 
 /**
@@ -108,6 +146,7 @@ export class DrapeInstanceCut {
     public readonly maxDepth: number;
     public readonly holdMilliseconds: number;
     private readonly topology: ITileTopology;
+    private readonly terrainDataLevel: (terrain: ITileAddress) => number;
     /** Tiles with imagery below them, by the last time the imagery cut reached below them. */
     private readonly subdivided = new Map<string, number>();
     private expiry: number | undefined;
@@ -117,6 +156,7 @@ export class DrapeInstanceCut {
         if (!Number.isInteger(this.maxDepth) || this.maxDepth < 0) throw new RangeError("The maximum instance depth must be a non-negative integer.");
         this.holdMilliseconds = Math.max(0, options.holdMilliseconds ?? 500);
         this.topology = options.topology ?? flatTileTopology({ wrapX: options.wrapX ?? true });
+        this.terrainDataLevel = options.terrainDataLevel ?? ((terrain) => terrain.lod);
     }
 
     /** Time at which a held level leaves the cut, so that the cut must be computed again; `undefined` when none is held. */
@@ -134,14 +174,14 @@ export class DrapeInstanceCut {
     public update(terrainCut: Iterable<ITileAddress>, imageryCut: Iterable<ITileAddress>, now: number): IDrapeInstance[] {
         this.recordImagery(imageryCut, now);
         const leaves = new Map<string, IDrapeInstance>();
-        const split = (address: ITileAddress, terrain: ITileAddress): void => {
+        const split = (address: ITileAddress, terrain: ITileAddress, level: number): void => {
             if (address.lod - terrain.lod < this.maxDepth && this.subdivided.has(key(address))) {
-                for (const child of childTileAddresses(address)) split(child, terrain);
+                for (const child of childTileAddresses(address)) split(child, terrain, level);
                 return;
             }
-            leaves.set(key(address), createInstance(address, terrain));
+            leaves.set(key(address), createInstance(address, terrain, level));
         };
-        for (const terrain of terrainCut) split({ ...terrain }, { ...terrain });
+        for (const terrain of terrainCut) split({ ...terrain }, { ...terrain }, this.terrainDataLevel(terrain));
         const inner = this.balance(leaves);
         for (const leaf of leaves.values()) this.connect(leaf, leaves, inner);
         return [...leaves.values()];
@@ -196,7 +236,7 @@ export class DrapeInstanceCut {
             leaves.delete(key(leaf.address));
             inner.add(key(leaf.address));
             for (const child of childTileAddresses(leaf.address)) {
-                const instance = createInstance(child, leaf.terrain);
+                const instance = createInstance(child, leaf.terrain, leaf.terrainLevel);
                 leaves.set(key(child), instance);
                 queue.push(instance);
             }
@@ -214,7 +254,7 @@ export class DrapeInstanceCut {
     private connect(leaf: IDrapeInstance, leaves: ReadonlyMap<string, IDrapeInstance>, inner: ReadonlySet<string>): void {
         const { address } = leaf;
         const coarsest = (touching: readonly IDrapeInstance[]): ITileAddress =>
-            touching.reduce((terrain, other) => (other.terrain.lod < terrain.lod ? other.terrain : terrain), leaf.terrain);
+            touching.reduce((coarsestSoFar, other) => (other.terrainLevel < coarsestSoFar.terrainLevel ? other : coarsestSoFar), leaf).terrain;
         const edgeTerrain: ITileAddress[] = [];
         for (const [edge, bit] of EDGES) {
             const touching = this.acrossEdge(address, edge, leaves, inner);

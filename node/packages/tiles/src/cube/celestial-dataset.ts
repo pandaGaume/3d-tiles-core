@@ -123,6 +123,8 @@ export class CelestialTileSource {
     /** Deepest level available anywhere. */
     public readonly deepestLOD: number;
     public readonly client: TileHttpClient;
+    /** Deepest level of the subtree rooted at each tile. */
+    private readonly subtreeDepths = new Map<string, number>();
 
     /** @param dataset - The descriptor, or its JSON value, checked by {@link parseCelestialDataset}. */
     public constructor(dataset: ICelestialDataset | unknown, options: ICelestialTileSourceOptions = {}) {
@@ -131,19 +133,35 @@ export class CelestialTileSource {
         this.surface = new CubeTileSurface(new ReferenceSurface(a, b, c));
         this.deepestLOD = this.dataset.subtrees.reduce((deepest, subtree) => Math.max(deepest, subtree.maxLOD), this.dataset.maxLOD);
         this.client = options.client instanceof TileHttpClient ? options.client : new TileHttpClient(options.client);
+        for (const { face, lod, x, y, maxLOD } of this.dataset.subtrees) {
+            const root = `${face}/${lod}/${x}/${y}`;
+            this.subtreeDepths.set(root, Math.max(maxLOD, this.subtreeDepths.get(root) ?? 0));
+        }
+    }
+
+    /**
+     * Deepest level of the dataset at the place of a tile, at most the level of the tile: the level of the tile itself
+     * where the dataset declares it, of its deepest declared ancestor elsewhere.
+     */
+    public servingLevel(address: ITileAddress): number {
+        const everywhere = Math.min(address.lod, this.dataset.maxLOD);
+        if (address.lod <= this.dataset.maxLOD || this.subtreeDepths.size === 0) return everywhere;
+        const face = address.face ?? 0;
+        let best = everywhere;
+        for (let lod = Math.min(address.lod, this.deepestLOD); lod >= 0; lod--) {
+            const shift = address.lod - lod;
+            const depth = this.subtreeDepths.get(`${face}/${lod}/${Math.floor(address.x / 2 ** shift)}/${Math.floor(address.y / 2 ** shift)}`);
+            if (depth !== undefined) best = Math.max(best, Math.min(depth, address.lod));
+            if (best === address.lod) break;
+        }
+        return best;
     }
 
     /** Whether the dataset declares a tile. */
     public isAvailable(address: ITileAddress): boolean {
         if (!isValidTileAddress(address)) return false;
-        const { minLOD, maxLOD, subtrees } = this.dataset;
-        if (address.lod < minLOD) return false;
-        if (address.lod <= maxLOD) return true;
-        return subtrees.some((subtree) => {
-            if (subtree.face !== (address.face ?? 0) || address.lod < subtree.lod || address.lod > subtree.maxLOD) return false;
-            const scale = 2 ** (address.lod - subtree.lod);
-            return Math.floor(address.x / scale) === subtree.x && Math.floor(address.y / scale) === subtree.y;
-        });
+        if (address.lod < this.dataset.minLOD) return false;
+        return this.servingLevel(address) === address.lod;
     }
 
     /** Returns the URL of a tile, whether it is available or not. */

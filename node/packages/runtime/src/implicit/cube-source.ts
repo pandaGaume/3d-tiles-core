@@ -252,6 +252,7 @@ class CubeImplicitResolver implements IImplicitTileResolver {
         return {
             ...override,
             boundingVolume: { box: cubeTileBoundingBox(decorator.addressOf(context), this.surface, range[0], range[1]) as never },
+            heightRange: range,
         };
     }
 }

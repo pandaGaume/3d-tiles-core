@@ -82,6 +82,8 @@ export class Tile3D<TSpatial, TRenderHandle = unknown, TGlyphHandle = unknown> {
     public contentBoundsRefined = false;
     /** The volume measured on the content, when it reported one. */
     public contentBounds: (() => IBoundingVolume) | undefined = undefined;
+    /** Heights measured on the content, kept with its bounding volume. */
+    public contentHeights: (() => readonly [number, number]) | undefined = undefined;
     public readonly contents: Array<Tile3DContent<TRenderHandle>>;
     public visible = false;
     public screenSpaceError = 0;
