@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import { DemPyramid, createHeightGrid, createMapzenTerrariumSource } from "../src";
 
-const SIZE = 256;
+/** Small tiles: the registration does not depend on their size, and generated levels load many of them. */
+const SIZE = 32;
 
 /** Tiles whose pixels hold the position of their own centre, in pixels of a level: what a source in `area` publishes. */
 function pixelRamp(axis: "x" | "y") {
@@ -35,10 +36,10 @@ function pointRamp(axis: "x" | "y") {
 
 const POSITIONS = [
     [10, 10],
-    [100.25, 50.75],
-    [200, 200],
-    [256, 256],
-    [300.5, 40.25],
+    [12.25, 6.75],
+    [25, 25],
+    [SIZE, SIZE],
+    [37.5, 5.25],
 ] as const;
 
 /** Reads the ramp back at positions in pixels of a level: a surface in its place returns the position asked. */
