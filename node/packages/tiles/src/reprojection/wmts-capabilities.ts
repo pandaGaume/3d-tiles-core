@@ -38,7 +38,7 @@ function required(value: string | undefined, name: string): string {
 }
 
 /**
- * Reads a WMTS capabilities document, without any XML library, so that it also runs in a Cloudflare Worker, which has no
+ * Reads a WMTS capabilities document, whose tiles are images, so in `area` registration, without any XML library, so that it also runs in a Cloudflare Worker, which has no
  * `DOMParser`. Comments are ignored: Moon Trek leaves old tile matrices in them.
  *
  * Pixel sizes come from the geometry of the matrix: the rows of a level span the origin symmetrically, so a pixel is
@@ -75,7 +75,7 @@ export function parseWmtsCapabilities(xml: string, layerIdentifier?: string): IW
         }
         const pixelSize = originY !== 0 ? (2 * Math.abs(originY!)) / (matrixHeight * tileHeight) : scale * METRES_PER_SCALE;
         if (!(pixelSize > 0)) throw new RangeError(`The tile matrix ${identifier} has no pixel size.`);
-        return { identifier, originX: originX!, originY: originY!, pixelSize, tileWidth, tileHeight, matrixWidth, matrixHeight };
+        return { identifier, registration: "area", originX: originX!, originY: originY!, pixelSize, tileWidth, tileHeight, matrixWidth, matrixHeight };
     });
     if (matrices.length === 0) throw new RangeError(`The tile matrix set ${set} has no tile matrix.`);
 

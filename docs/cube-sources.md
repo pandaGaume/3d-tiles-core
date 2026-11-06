@@ -37,7 +37,7 @@ d = normalize(C + tan(pi/4 (2u - 1)) U + tan(pi/4 (2v - 1)) V)
 
 The polar forms use no latitude or longitude, so the pole is a point like any other. With a `central_meridian` `m`, `d.x` and `d.y` are first turned by `-m`. These forms are for a sphere: the polar maps of the Earth need the formulas of the ellipsoid, see [below](#wgs84-sources).
 
-**3. Map to pixel.** Pixel `n` has its centre at `n`:
+**3. Map to pixel.** Every source declares its registration, in `registration` of its tile matrix: WMTS and XYZ tiles are `area`, and a GeoTIFF states it in `GTRasterTypeGeoKey`. In `area`, shown here, the origin is the corner of the first pixel. In `point`, it is the first sample, and the `0.5` goes away. Pixel `n` has its centre at `n`:
 
 ```text
 px = (x - originX) / pixelSize - 0.5        py = (originY - y) / pixelSize - 0.5

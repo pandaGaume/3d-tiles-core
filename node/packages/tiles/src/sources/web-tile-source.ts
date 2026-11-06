@@ -1,4 +1,4 @@
-import type { ITileAddress, ITileMetrics } from "../addressing";
+import { assertRasterRegistration, type ITileAddress, type ITileMetrics, type RasterRegistration } from "../addressing";
 import { TileHttpClient, type ITileHttpClientOptions, type TileFetchResult } from "./tile-http-client";
 import { expandTileUrlTemplate, validateTileUrlTemplate, type ITileUrlTemplateOptions } from "./url-template";
 
@@ -9,6 +9,8 @@ export interface IWebTileSourceOptions extends ITileUrlTemplateOptions {
     urlTemplate: string;
     /** Addressing, tile size and available levels of the source. */
     metrics: ITileMetrics;
+    /** Where the samples of the tiles lie, required: `area` for tiles published as images, whatever they hold. */
+    registration: RasterRegistration;
     /** Shared client, or options used to create a dedicated one. */
     client?: TileHttpClient | ITileHttpClientOptions;
     /** Attribution text that applications must display with the tiles. */
@@ -26,14 +28,18 @@ export class WebTileSource {
     public readonly id: string;
     public readonly urlTemplate: string;
     public readonly metrics: ITileMetrics;
+    public readonly registration: RasterRegistration;
     public readonly attribution: string | undefined;
     public readonly client: TileHttpClient;
     private readonly templateOptions: ITileUrlTemplateOptions;
 
+    /** @throws TypeError When `registration` is missing or unknown. */
     public constructor(options: IWebTileSourceOptions) {
+        assertRasterRegistration(options.registration);
         this.id = options.id ?? "web-tiles";
         this.urlTemplate = options.urlTemplate;
         this.metrics = options.metrics;
+        this.registration = options.registration;
         this.attribution = options.attribution;
         this.templateOptions = {
             ...(options.subdomains ? { subdomains: [...options.subdomains] } : {}),

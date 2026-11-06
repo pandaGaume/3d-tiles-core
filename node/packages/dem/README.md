@@ -61,13 +61,13 @@ A tile service converts sources with heights along the normal of an ellipsoid wi
 
 ## Continuous surfaces
 
-`DemPyramid` is a raster pyramid of height grids. Each DEM tile loads with its east, south and south-east neighbours and is stitched with them, so that neighbouring tiles share their edge heights; tiles beyond `maxLOD` sample a sub-area of their ancestor.
+`DemPyramid` is a raster pyramid of height grids. Its source declares its `registration`, which is required: see [Declaring the registration](../raster/README.md#declaring-the-registration), which also covers the deprecated `prestitched`. A DEM tile in `area` registration loads with its eight neighbours and its heights move to the corners of its pixels, so that neighbouring tiles share their edge heights; tiles beyond `maxLOD` sample a sub-area of their ancestor.
 
 ```ts
 import { ChildHeightRanges, DemPyramid, selectSurfaceLevels, webDemTileLoader, webMercatorSurfaceNormal } from "@spacexr/dem";
 
 const childHeightRanges = new ChildHeightRanges();
-const pyramid = new DemPyramid({ load: webDemTileLoader(dem, decoder), maxLOD: 15, wrapX: true, childHeightRanges });
+const pyramid = new DemPyramid({ registration: dem.source.registration, load: webDemTileLoader(dem, decoder), maxLOD: 15, wrapX: true, childHeightRanges });
 
 const heights = await pyramid.tileHeights({ lod: 17, x: 67000, y: 45000 });
 const height = heights?.sampler(0.5, 0.5); // u east, v south over the tile

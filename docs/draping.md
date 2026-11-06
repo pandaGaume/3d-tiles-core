@@ -21,8 +21,8 @@ Both engines remain available behind the same runtimes, pages and residency inde
 
 ## Pages
 
-- A page is the stitched raster of one imagery tile: `(w + 1) x (h + 1)` texels in `point` registration, following [Rasters](raster.md#stitching). Neighbouring pages then hold the same texels on their shared edge, and bilinear filtering shows no seam.
-- When a neighbour arrives, the pages it completes, on its west, north and north-west, are uploaded again, or only their extra column, row or corner.
+- A page is the stitched raster of one imagery tile: `(w + 1) x (h + 1)` texels in `point` registration, following [Rasters](raster.md#stitching), whatever the registration of the source. Neighbouring pages then hold the same texels on their shared edge, and bilinear filtering shows no seam. Imagery and terrain stay in place at any pair of levels, since both lie on the corners of their pixels: a model placed in absolute coordinates lands where it should on both.
+- When a neighbour arrives, the pages it completes are uploaded again.
 - A texel in point registration `t` in `[0, 1]` maps to the texture coordinate `(t * (size - 1) + 0.5) / size`, the centre of the texel.
 
 ## Residency and covers

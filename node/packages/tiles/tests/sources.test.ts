@@ -127,9 +127,23 @@ describe("TileHttpClient", () => {
 describe("WebTileSource", () => {
     it("serves only its levels and validates its template at construction", () => {
         const metrics = new WebMercatorTileMetrics({ minLOD: 2, maxLOD: 4 });
-        const source = new WebTileSource({ urlTemplate: "https://{s}.t/{quadkey}", subdomains: ["0", "1"], metrics, client: { fetch: scriptedFetch([]).fetch } });
+        const source = new WebTileSource({
+            registration: "area",
+            urlTemplate: "https://{s}.t/{quadkey}",
+            subdomains: ["0", "1"],
+            metrics,
+            client: { fetch: scriptedFetch([]).fetch },
+        });
         expect(source.urlOf({ lod: 3, x: 3, y: 5 })).toBe("https://0.t/213");
         expect(() => source.urlOf({ lod: 5, x: 0, y: 0 })).toThrow(RangeError);
-        expect(() => new WebTileSource({ urlTemplate: "https://t/{zoom}", metrics, client: { fetch: scriptedFetch([]).fetch } })).toThrow(TileUrlTemplateError);
+        expect(() => new WebTileSource({ registration: "area", urlTemplate: "https://t/{zoom}", metrics, client: { fetch: scriptedFetch([]).fetch } })).toThrow(
+            TileUrlTemplateError
+        );
+    });
+
+    it.each([undefined, "pixel"])("rejects the registration %s", (registration) => {
+        const options = { urlTemplate: "https://t/{z}/{x}/{y}", metrics: new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 4 }), client: { fetch: scriptedFetch([]).fetch } };
+        expect(() => new WebTileSource({ ...options, registration: registration as never })).toThrow(TypeError);
+        expect(new WebTileSource({ ...options, registration: "point" }).registration).toBe("point");
     });
 });

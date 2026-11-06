@@ -97,9 +97,11 @@ describe("RasterPyramid generation", () => {
         const size = 4;
         const field: LatticeSampler = (x, y) => 2 * x + y;
         const pyramid = new RasterPyramid({
+            registration: "area",
             load: (address) => {
                 loads.push(address.lod);
-                return Promise.resolve(latticeTile(field, address, size));
+                // Pixels, centred half a pixel from the lattice of their level.
+                return Promise.resolve(latticeTile((x, y) => field(x + 0.5, y + 0.5), address, size));
             },
             maxLOD: 2,
             generation: { maxLOD: 4, interpolation: "cubic" },
@@ -115,6 +117,6 @@ describe("RasterPyramid generation", () => {
     });
 
     it("rejects generated levels above the source", () => {
-        expect(() => new RasterPyramid({ load: () => Promise.resolve(undefined), maxLOD: 3, generation: { maxLOD: 2 } })).toThrow(RangeError);
+        expect(() => new RasterPyramid({ registration: "area", load: () => Promise.resolve(undefined), maxLOD: 3, generation: { maxLOD: 2 } })).toThrow(RangeError);
     });
 });

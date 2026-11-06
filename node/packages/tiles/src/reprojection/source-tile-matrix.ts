@@ -1,3 +1,5 @@
+import { assertRasterRegistration, type RasterRegistration } from "../addressing";
+
 import type { IMapPosition } from "./source-projection";
 
 /**
@@ -7,7 +9,9 @@ import type { IMapPosition } from "./source-projection";
  */
 export interface ISourceTileMatrix {
     identifier: string;
-    /** Map position of the outer corner of the first pixel. */
+    /** Where the pixels lie, required: a WMTS or XYZ tile is `area`; a GeoTIFF declares it in its `GTRasterTypeGeoKey`. */
+    registration: RasterRegistration;
+    /** Map position of the outer corner of the first pixel in `area` registration, of its centre in `point` registration. */
     originX: number;
     originY: number;
     /** Map units per pixel. Rows run toward decreasing `y`. */
@@ -33,10 +37,16 @@ export interface ISourceTile {
     row: number;
 }
 
-/** Fractional pixel of a map position, over the whole matrix: pixel `n` has its centre at `n`. */
+/**
+ * Fractional pixel of a map position, over the whole matrix: pixel `n` has its centre at `n`.
+ *
+ * @throws TypeError When the matrix does not declare its registration.
+ */
 export function sourcePixelCoordinates(matrix: ISourceTileMatrix, position: Readonly<IMapPosition>, target: IMapPosition = { x: 0, y: 0 }): IMapPosition {
-    target.x = (position.x - matrix.originX) / matrix.pixelSize - 0.5;
-    target.y = (matrix.originY - position.y) / matrix.pixelSize - 0.5;
+    assertRasterRegistration(matrix.registration);
+    const offset = matrix.registration === "area" ? 0.5 : 0;
+    target.x = (position.x - matrix.originX) / matrix.pixelSize - offset;
+    target.y = (matrix.originY - position.y) / matrix.pixelSize - offset;
     return target;
 }
 
@@ -62,6 +72,7 @@ export function webMercatorTileMatrix(level: number, tileSize = 256, semiMajorAx
     const tiles = 2 ** level;
     return {
         identifier: String(level),
+        registration: "area",
         originX: -half,
         originY: half,
         pixelSize: (2 * half) / (tiles * tileSize),
@@ -77,6 +88,7 @@ export function geographicTileMatrix(level: number, tileSize = 256): ISourceTile
     const tiles = 2 ** level;
     return {
         identifier: String(level),
+        registration: "area",
         originX: -180,
         originY: 90,
         pixelSize: 180 / (tiles * tileSize),

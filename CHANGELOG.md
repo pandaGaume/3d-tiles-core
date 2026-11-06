@@ -8,6 +8,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- `RasterRegistration` is declared by every source where its data is imported, with no default: `registration` of `WebTileSource`, `RasterPyramid`, `DemPyramid`, `StitchedRasterGrids` and `ISourceTileMatrix`.
 - `@spacexr/tiles/reprojection`: projections, WMTS capabilities, source levels and resampling, from raster sources to the cube index. `docs/cube-sources.md` is the brief of a tile service, for the Solar System Treks and WGS84 sources.
 - `VerticalScale`, the vertical exaggeration shared by a scene: a `TileRuntime` given it derives its tiles again when it changes, and `EcefSpatialMetric` with a `vertical` placement moves objects with it. `tileBoundingVolume` may be a function, evaluated again.
 - Multilanguage repository structure.
@@ -23,7 +24,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Terrarium elevation encoding in `@spacexr/dem`: `terrariumPixel` and `encodeTerrariumGrid` turn metre heights into raw RGBA pixels at a step of 1/256 metre, keep NoData distinct from the lowest height, and reject heights out of range.
 - Cube index in `@spacexr/tiles/cube`: `CubeFace` and the equi-angular mapping, the tile of a direction, neighbours across faces with their quarter turns, the corners of 3 tiles, planetocentric directions, `ReferenceSurface` with triaxial radii and radial heights, and the geometric error of a tile. Tile addresses take an optional `face`, kept by parents and children, and URL templates the `{face}` variable, now a built-in name.
 - Tile surfaces: `ITileSurface` places tiles on a body whatever the projection, with `WebMercatorTileSurface` and `CubeTileSurface`. `@spacexr/grid` builds on it `buildGridTileGeometry`, a topology on a tile with vertices relative to its centre, and `buildGridTileShape`, the lattice a renderer uploads and displaces on the GPU.
-- Tile topologies: `ITileTopology` gives neighbours with their quarter turns and the area of a tile in another one, with `flatTileTopology` and `CUBE_TILE_TOPOLOGY`. `DrapeInstanceCut` takes a topology and joins instances across cube faces, with corners of 3 tiles. Pyramids, residency and stitching key tiles by face with `tileAddressKey`. `RasterPyramid` takes `prestitched` tiles, which already hold their shared edges.
+- Tile topologies: `ITileTopology` gives neighbours with their quarter turns and the area of a tile in another one, with `flatTileTopology` and `CUBE_TILE_TOPOLOGY`. `DrapeInstanceCut` takes a topology and joins instances across cube faces, with corners of 3 tiles. Pyramids, residency and stitching key tiles by face with `tileAddressKey`. `RasterPyramid` takes tiles in `point` registration, which already hold their shared edges.
 - Cube DEMs: `parseCelestialDataset` and `CelestialTileSource` read the dataset of a tile service and its availability. `cubeDemPyramid` gives its radial heights as one surface per face, tiles it does not declare interpolating their parent. `tileSurfaceNormal` gives the normal of a displaced surface on any tile surface, and `radialHeightOnRay` converts sources with heights along a normal.
 - Cube tilesets in the runtime: `createCubeImplicitSource` presents a whole body as an explicit root with the implicit quadtrees of the six faces, with oriented boxes from `cubeTileBoundingBox`, geometric errors following the distortion of the cube, measured height ranges and subtrees with their own levels. `quadtreeBalance` takes a `topology` and balances across cube faces.
 - Reprojection in `@spacexr/tiles/reprojection`: geographic, polar stereographic and Web Mercator projections from the directions of the cube index, WMTS capabilities without an XML library, the source level of a cube level, the source tiles a cube tile reads, bilinear resampling, heights rebased on a reference surface and cap blends. Checked against the capabilities and the data of Moon Trek.
@@ -58,9 +59,15 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - `@spacexr/geodesy` is installed from the npm registry instead of a vendored archive.
 - Conformance tests compare the exact set of diagnostic codes reported for each fixture.
 - Web Mercator tile metrics moved from the runtime to `@spacexr/tiles`; the runtime re-exports them. `getLatLonToTileXY` now keeps the east and south map edges inside the pyramid.
+- **Breaking:** `registration` is required on `WebTileSource`, `RasterPyramid`, `DemPyramid`, `StitchedRasterGrids` and `ISourceTileMatrix`. Leaving it out does not compile, and a missing or unknown value throws a `TypeError`. Tiles that declared nothing were read as `area`: declare `registration: "area"`, or pass `source.registration` on. See [Declaring the registration](node/packages/raster/README.md#declaring-the-registration).
+
+### Deprecated
+
+- `prestitched` of `RasterPyramid`, `DemPyramid` and `StitchedRasterGrids`: declare `registration` alone, `prestitched: true` is `point` and `prestitched: false` is `area`. The option no longer decides anything: it does not replace `registration`, and a value that disagrees with it throws a `TypeError`.
 
 ### Fixed
 
+- Tiles in `area` registration are moved to the corners of their pixels when stitched: their pixels were copied into a `point` grid, which moved terrain and imagery half a pixel to the north-west, 1.46 m at level 15 and 46.9 m at level 10 at a latitude of 52 degrees. Each tile now loads with its eight neighbours, and the surface is smoothed by half a pixel. Generated levels start from those corners.
 - `quadtreeBalance.fillGaps`, used on the cube index, leaves no holes in the view: a tile the balance must refine, whose children were not ready, kept any displayed descendant, even one covering a corner of it, and the rest stayed empty until the children loaded. With the option it keeps them only when they cover the visible part of the tile, and falls back to a ready tile otherwise.
 - Tiles seen before load again after zooming out and in: a cancelled load no longer counts against `maxLoadAttempts`, and the contents of an activation cancelled before it started return to the idle state instead of staying queued forever.
 - The children of a refined tile are requested together instead of one after another.

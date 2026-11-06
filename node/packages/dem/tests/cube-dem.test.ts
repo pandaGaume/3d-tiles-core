@@ -89,7 +89,7 @@ describe("cube DEM tiles", () => {
 
     it("read heights on the face of the point, the stitched samples at their place", async () => {
         const pyramid = new DemPyramid({
-            prestitched: true,
+            registration: "point",
             maxLOD: 1,
             load: async (address) => createHeightGrid(3, 3, new Float32Array([0, 1, 2, 3, 4, 5, 6, 7, 8].map((value) => value + 10 * (address.face ?? 0)))),
         });

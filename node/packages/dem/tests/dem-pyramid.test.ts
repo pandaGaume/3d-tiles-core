@@ -9,8 +9,8 @@ function planeTile(address: ITileAddress) {
     const heights: number[] = [];
     for (let row = 0; row < 4; row++) {
         for (let column = 0; column < 4; column++) {
-            const x = (address.x + column / 4) / count;
-            const y = (address.y + row / 4) / count;
+            const x = (address.x + (column + 0.5) / 4) / count;
+            const y = (address.y + (row + 0.5) / 4) / count;
             heights.push(1000 * x + 500 * y);
         }
     }
@@ -20,12 +20,13 @@ function planeTile(address: ITileAddress) {
 describe("DemPyramid", () => {
     it("loads tile heights with their range and records the child ranges", async () => {
         const childHeightRanges = new ChildHeightRanges();
-        const pyramid = new DemPyramid({ load: planeTile, maxLOD: 2, childHeightRanges });
+        const pyramid = new DemPyramid({ registration: "area", load: planeTile, maxLOD: 2, childHeightRanges });
         const heights = await pyramid.tileHeights({ lod: 1, x: 0, y: 0 });
 
         expect(heights?.demAddress).toEqual({ lod: 1, x: 0, y: 0 });
         expect(heights?.sampler(1, 1)).toBeCloseTo(750, 3);
-        expect(heights?.range).toEqual({ minimum: 0, maximum: 750 });
+        // The north-west corner of the pyramid has no pixels beyond it: it takes the value of its only pixel.
+        expect(heights?.range).toEqual({ minimum: 93.75, maximum: 750 });
         expect(heights?.quadrants[3].maximum).toBe(750);
         expect(childHeightRanges.size).toBe(4);
         expect(childHeightRanges.rangeFor({ lod: 2, x: 1, y: 1 })).toEqual([heights!.quadrants[3].minimum, 750]);
@@ -33,7 +34,7 @@ describe("DemPyramid", () => {
     });
 
     it("overzooms beyond maxLOD and samples the same surface", async () => {
-        const pyramid = new DemPyramid({ load: planeTile, maxLOD: 1 });
+        const pyramid = new DemPyramid({ registration: "area", load: planeTile, maxLOD: 1 });
         const heights = await pyramid.tileHeights({ lod: 3, x: 3, y: 1 });
 
         expect(pyramid.demLevel(3)).toBe(1);
@@ -43,7 +44,7 @@ describe("DemPyramid", () => {
     });
 
     it("generates DEM levels below the source with the chosen interpolation", async () => {
-        const pyramid = new DemPyramid({ load: planeTile, maxLOD: 1, generation: { maxLOD: 3, interpolation: "cubic" } });
+        const pyramid = new DemPyramid({ registration: "area", load: planeTile, maxLOD: 1, generation: { maxLOD: 3, interpolation: "cubic" } });
         const heights = await pyramid.tileHeights({ lod: 3, x: 3, y: 1 });
 
         expect(pyramid.demLevel(3)).toBe(3);
@@ -55,7 +56,7 @@ describe("DemPyramid", () => {
     });
 
     it("gives the same height and gradient from either side of a tile edge", async () => {
-        const pyramid = new DemPyramid({ load: planeTile, maxLOD: 2, wrapX: true });
+        const pyramid = new DemPyramid({ registration: "area", load: planeTile, maxLOD: 2, wrapX: true });
         expect(pyramid.heightAt(0.5, 0.25, 1)).toBeNaN();
         expect(pyramid.surfaceGradient(0.5, 0.25, [1], 4)).toBeUndefined();
         await Promise.all([pyramid.tileHeights({ lod: 1, x: 0, y: 0 }), pyramid.tileHeights({ lod: 1, x: 1, y: 0 })]);

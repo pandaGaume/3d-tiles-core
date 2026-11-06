@@ -1,15 +1,8 @@
+import type { RasterRegistration } from "@spacexr/tiles";
+
 import type { IRasterGrid } from "./raster-grid";
 
-/**
- * Location of the samples of a raster over the tile extent.
- *
- * - `area`: each sample covers one pixel, so sample `i` is centred at `(i + 0.5) / size`. This is how web tiles are
- *   published, elevation and imagery alike; positions closer to the edge than half a pixel use the edge samples, so
- *   two neighbouring tiles disagree on their shared edge.
- * - `point`: sample `i` lies at `i / (size - 1)`, so the first and last samples lie on the tile edges. Stitched
- *   rasters use it: their last column and row come from the neighbouring tiles, which then share their edge samples.
- */
-export type RasterRegistration = "area" | "point";
+export type { RasterRegistration };
 
 /** Value interval. Both bounds are `NaN` when no valid sample is covered. */
 export interface IRasterRange {

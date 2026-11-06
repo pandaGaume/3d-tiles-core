@@ -80,12 +80,16 @@ export function interpolateLattice(sample: LatticeSampler, x: number, y: number,
  * @param neighborhood - The parent and its neighbours, indexed by {@link TileNeighbor}; the centre is required.
  * @param column - Column of the child in the parent, 0 or 1.
  * @param row - Row of the child in the parent, 0 or 1.
+ * @param parentSamples - `lattice` when the tiles hold samples of that lattice, as generated tiles do. `pixels` when they
+ *     are tiles of a source in `area` registration, centred half a pixel from it: each lattice sample is then the mean of
+ *     the four pixels around it, as in a stitched raster. Defaults to `lattice`.
  */
 export function generateChildRaster<TData extends IRasterGrid["data"]>(
     neighborhood: readonly (IRasterGrid<TData> | undefined)[],
     column: number,
     row: number,
-    interpolation: RasterInterpolation
+    interpolation: RasterInterpolation,
+    parentSamples: "lattice" | "pixels" = "lattice"
 ): IRasterGrid<TData> {
     const parent = neighborhood[TileNeighbor.C];
     if (!parent) throw new RangeError("The neighbourhood needs its centre tile.");
@@ -97,7 +101,7 @@ export function generateChildRaster<TData extends IRasterGrid["data"]>(
     }
     const data = allocateLike(parent.data, width * height * channels);
     for (let channel = 0; channel < channels; channel++) {
-        const sample: LatticeSampler = (x, y) => {
+        const stored: LatticeSampler = (x, y) => {
             // Tile of the neighbourhood holding the lattice position, clamped to the parent where it is missing.
             const tileColumn = x < 0 ? 0 : x >= width ? 2 : 1;
             const tileRow = y < 0 ? 0 : y >= height ? 2 : 1;
@@ -107,6 +111,8 @@ export function generateChildRaster<TData extends IRasterGrid["data"]>(
             const localY = y - (tileRow - 1) * height;
             return tile.data[(localY * width + localX) * channels + channel]!;
         };
+        const sample: LatticeSampler =
+            parentSamples === "lattice" ? stored : (x, y) => weighted([stored(x - 1, y - 1), stored(x, y - 1), stored(x - 1, y), stored(x, y)], [1, 1, 1, 1]);
         for (let j = 0; j < height; j++) {
             for (let i = 0; i < width; i++) {
                 data[(j * width + i) * channels + channel] = interpolateLattice(sample, (column * width + i) / 2, (row * height + j) / 2, interpolation);

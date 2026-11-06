@@ -2,7 +2,7 @@ import { TileNeighbor, TilePyramid, parentTileAddress, tileNeighborAddress, type
 
 import type { IRasterGrid } from "./raster-grid";
 import { generateChildRaster, generatePointChildRaster, type RasterInterpolation } from "./resampling";
-import { rasterRangeInArea, sampleRasterBilinear, type IRasterRange } from "./sampling";
+import { rasterRangeInArea, sampleRasterBilinear, type IRasterRange, type RasterRegistration } from "./sampling";
 import { StitchedRasterGrids, type RasterGridFactory } from "./stitched-raster-grids";
 
 export interface IRasterPyramidOptions<TGrid extends IRasterGrid> extends Omit<ITilePyramidOptions<IRasterGrid<TGrid["data"]>>, "prefetch" | "onLoad" | "onEvict"> {
@@ -21,12 +21,25 @@ export interface IRasterPyramidOptions<TGrid extends IRasterGrid> extends Omit<I
      */
     generation?: IRasterGenerationOptions;
     /**
-     * Source tiles already hold their shared edges, `(w + 1) x (h + 1)` samples in `point` registration, as a tile
-     * service of the cube index produces them. Neighbours are neither loaded nor read. Generated levels, and the tiles a
-     * sparse source does not hold, interpolate their parent bilinearly. Defaults to false.
+     * Where the samples of the source tiles lie, declared by the source: it decides how tiles are stitched. Required, with
+     * no default.
+     *
+     * - `area`: `w x h` pixels, as web tiles are published. Each tile loads with its eight neighbours, and its samples are
+     *   moved to the corners of the pixels.
+     * - `point`: tiles already hold their shared edges, `(w + 1) x (h + 1)` samples, as a tile service of the cube index
+     *   produces them. Neighbours are neither loaded nor read. Generated levels, and the tiles a sparse source does not
+     *   hold, interpolate their parent bilinearly.
+     */
+    registration: RasterRegistration;
+    /**
+     * @deprecated Declare `registration` alone: `true` is `point`, `false` is `area`. This option no longer decides
+     *     anything and does not replace `registration`: a value that disagrees with it is rejected.
      */
     prestitched?: boolean;
 }
+
+const LATTICE_NEIGHBORS: readonly TileNeighbor[] = [TileNeighbor.E, TileNeighbor.S, TileNeighbor.SE];
+const ALL_NEIGHBORS: readonly TileNeighbor[] = [TileNeighbor.NW, TileNeighbor.N, TileNeighbor.NE, TileNeighbor.W, TileNeighbor.E, TileNeighbor.SW, TileNeighbor.S, TileNeighbor.SE];
 
 export interface IRasterGenerationOptions {
     /** Deepest generated level. */
@@ -50,8 +63,8 @@ export interface IRasterTileRegion<TGrid extends IRasterGrid> extends ITileAreaI
 /**
  * Raster tile pyramid loaded on demand, as one continuous surface: elevation, imagery, masks.
  *
- * Each tile loads with its east, south and south-east neighbours and is stitched with them, so that neighbouring
- * tiles of one level share their edge samples. Tiles below the source levels are generated when `generation` is set;
+ * Each tile loads with the neighbours its registration needs and is stitched with them, so that neighbouring tiles of
+ * one level share their edge samples. Tiles below the source levels are generated when `generation` is set;
  * deeper tiles sample the sub-area of their ancestor at the deepest level. Points
  * are addressed over the whole pyramid, `x` eastward and `y` southward in `[0, 1]`, so values do not depend on the
  * tile asking.
@@ -61,12 +74,14 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
     public readonly sourceMaxLOD: number;
     private readonly tiles: TilePyramid<IRasterGrid<TGrid["data"]>>;
     private readonly stitched: StitchedRasterGrids<TGrid>;
+    private readonly registration: RasterRegistration;
     private readonly wrapX: boolean;
     private readonly onStitched: ((changed: readonly ITileAddress[]) => void) | undefined;
     private readonly stitchedListeners = new Set<(changed: readonly ITileAddress[]) => void>();
 
+    /** @throws TypeError When the registration is missing or unknown, or when the deprecated `prestitched` disagrees with it. */
     public constructor(options: IRasterPyramidOptions<TGrid>) {
-        const { create, onStitched, generation, prestitched = false, ...pyramid } = options;
+        const { create, onStitched, generation, registration, prestitched, ...pyramid } = options;
         this.sourceMaxLOD = pyramid.maxLOD;
         if (generation && (!Number.isInteger(generation.maxLOD) || generation.maxLOD < pyramid.maxLOD)) {
             throw new RangeError("The generated levels must reach at least the source maxLOD.");
@@ -74,16 +89,18 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
         const interpolation = generation?.interpolation ?? "bilinear";
         this.wrapX = options.wrapX ?? false;
         this.onStitched = onStitched;
-        this.stitched = new StitchedRasterGrids<TGrid>({ wrapX: this.wrapX, prestitched, ...(create ? { create } : {}) });
+        this.registration = registration;
+        this.stitched = new StitchedRasterGrids<TGrid>({ wrapX: this.wrapX, registration, ...(prestitched === undefined ? {} : { prestitched }), ...(create ? { create } : {}) });
         this.tiles = new TilePyramid({
             ...pyramid,
             maxLOD: generation?.maxLOD ?? pyramid.maxLOD,
             load: (address) => {
-                if (!prestitched) return address.lod <= this.sourceMaxLOD ? pyramid.load(address) : this.generate(address, interpolation);
-                return this.loadPrestitched(address, pyramid.load);
+                if (registration === "area") return address.lod <= this.sourceMaxLOD ? pyramid.load(address) : this.generate(address, interpolation);
+                return this.loadWithEdges(address, pyramid.load);
             },
-            prefetch: prestitched ? [] : [TileNeighbor.E, TileNeighbor.S, TileNeighbor.SE],
-            onLoad: (address, grid) => this.notifyStitched(this.stitched.add(address, grid)),
+            // Pixels need the eight tiles around them; generated tiles hold a lattice, completed from the east and south.
+            prefetch: registration === "point" ? [] : (address) => (address.lod <= this.sourceMaxLOD ? ALL_NEIGHBORS : LATTICE_NEIGHBORS),
+            onLoad: (address, grid) => this.notifyStitched(this.add(address, grid)),
             onEvict: (address) => this.stitched.delete(address),
         });
     }
@@ -143,7 +160,7 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
         if (!region) return undefined;
         const { ancestor, west, north, size } = region;
         // Evicted again while its neighbours loaded: stitch it once more.
-        if (!this.stitched.has(ancestor)) this.notifyStitched(this.stitched.add(ancestor, region.content));
+        if (!this.stitched.has(ancestor)) this.notifyStitched(this.add(ancestor, region.content));
         const grid = this.stitched.get(ancestor)!;
         return {
             address: region.address,
@@ -182,13 +199,18 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
         return Number.NaN;
     }
 
+    /** Stitches a tile: tiles generated below the source hold a lattice, whatever the registration of the source. */
+    private add(address: ITileAddress, grid: IRasterGrid<TGrid["data"]>): ITileAddress[] {
+        return this.stitched.add(address, grid, address.lod <= this.sourceMaxLOD ? "source" : "generated");
+    }
+
     private notifyStitched(changed: readonly ITileAddress[]): void {
         this.onStitched?.(changed);
         for (const listener of this.stitchedListeners) listener(changed);
     }
 
     /** Loads a tile that holds its shared edges, or interpolates its parent where the source has none. */
-    private async loadPrestitched(
+    private async loadWithEdges(
         address: ITileAddress,
         load: (address: ITileAddress) => Promise<IRasterGrid<TGrid["data"]> | undefined>
     ): Promise<IRasterGrid<TGrid["data"]> | undefined> {
@@ -217,6 +239,8 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
             })
         );
         if (!neighborhood[TileNeighbor.C]) return undefined;
-        return generateChildRaster(neighborhood, address.x - parent.x * 2, address.y - parent.y * 2, interpolation);
+        // The first generated level starts from the pixels of the source, the next ones from the lattice of their parent.
+        const parentSamples = parent.lod <= this.sourceMaxLOD && this.registration === "area" ? "pixels" : "lattice";
+        return generateChildRaster(neighborhood, address.x - parent.x * 2, address.y - parent.y * 2, interpolation, parentSamples);
     }
 }
