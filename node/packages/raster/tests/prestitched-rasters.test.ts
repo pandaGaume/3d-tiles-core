@@ -10,9 +10,53 @@ function grid(size: number, value: (column: number, row: number) => number): IRa
     return createRasterGrid(size, size, 1, data);
 }
 
+describe("declared registration", () => {
+    const load = async (): Promise<undefined> => undefined;
+
+    it.each([undefined, "pixel", "AREA"])("rejects the registration %s", (registration) => {
+        expect(() => new StitchedRasterGrids({ registration: registration as never })).toThrow(TypeError);
+        expect(() => new RasterPyramid({ registration: registration as never, maxLOD: 2, load })).toThrow(TypeError);
+    });
+
+    it.each([
+        [true, "point"],
+        [false, "area"],
+    ] as const)("accepts the deprecated prestitched: %s beside registration: %s", (prestitched, registration) => {
+        expect(() => new StitchedRasterGrids({ registration, prestitched })).not.toThrow();
+        expect(() => new RasterPyramid({ registration, prestitched, maxLOD: 2, load })).not.toThrow();
+    });
+
+    it.each([
+        [true, "area"],
+        [false, "point"],
+    ] as const)("rejects the deprecated prestitched: %s against registration: %s", (prestitched, registration) => {
+        expect(() => new StitchedRasterGrids({ registration, prestitched })).toThrow(/prestitched is deprecated/);
+        expect(() => new RasterPyramid({ registration, prestitched, maxLOD: 2, load })).toThrow(/prestitched is deprecated/);
+    });
+
+    it("does not take the deprecated prestitched in place of registration", () => {
+        expect(() => new RasterPyramid({ prestitched: true, maxLOD: 2, load } as never)).toThrow(/registration: "point"/);
+    });
+
+    it("loads with the registration, whatever the deprecated prestitched says beside it", async () => {
+        const requested: string[] = [];
+        const pyramid = new RasterPyramid({
+            registration: "point",
+            prestitched: true,
+            maxLOD: 2,
+            load: async (address) => {
+                requested.push(tileAddressKey(address));
+                return grid(3, () => 1);
+            },
+        });
+        await pyramid.load({ lod: 2, x: 1, y: 1 });
+        expect(requested).toEqual([tileAddressKey({ lod: 2, x: 1, y: 1 })]);
+    });
+});
+
 describe("prestitched rasters", () => {
     it("are used as they are, without their neighbours", () => {
-        const stitched = new StitchedRasterGrids({ prestitched: true });
+        const stitched = new StitchedRasterGrids({ registration: "point" });
         const east = grid(3, () => 7);
         const address = { face: 3, lod: 2, x: 1, y: 1 };
         const own = grid(3, (column, row) => column + 10 * row);
@@ -30,7 +74,7 @@ describe("prestitched rasters", () => {
     it("load without neighbours and keep faces apart", async () => {
         const requested: string[] = [];
         const pyramid = new RasterPyramid({
-            prestitched: true,
+            registration: "point",
             maxLOD: 2,
             load: async (address) => {
                 requested.push(tileAddressKey(address));
@@ -61,7 +105,7 @@ describe("prestitched rasters", () => {
 
         const loads: string[] = [];
         const pyramid = new RasterPyramid({
-            prestitched: true,
+            registration: "point",
             maxLOD: 1,
             generation: { maxLOD: 3 },
             load: async (address) => {

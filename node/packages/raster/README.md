@@ -25,13 +25,14 @@ const range = rasterRangeInArea(colours, 0, 0, 0.5, 0.5, "area", 1);
 
 ## Seamless pyramids
 
-The last pixels of a published tile lie half a pixel inside it, so two neighbouring tiles never share a sample: interpolated heights crack and interpolated colours show a seam. `StitchedRasterGrids` adds the first column of the east neighbour, the first row of the south neighbour and the first sample of the south-east neighbour to every tile, as SpaceXR does, whatever the arrival order. `RasterPyramid` loads those neighbours with every tile and stitches them:
+The last pixels of a published tile lie half a pixel inside it, so two neighbouring tiles never share a sample: interpolated heights crack and interpolated colours show a seam. `StitchedRasterGrids` gives every tile `(w + 1) x (h + 1)` samples on the corners of its pixels, each the mean of the four pixels around it, whatever the arrival order. `RasterPyramid` loads the eight neighbours of every tile and stitches them:
 
 ```ts
 import { BrowserImageDecoder, RasterPyramid } from "@spacexr/raster";
 
 const images = new BrowserImageDecoder();
 const imagery = new RasterPyramid({
+    registration: source.registration,
     load: async (address) => {
         const result = await source.fetchTile(address);
         return result.status === "absent" ? undefined : images.decode(result.bytes);
@@ -46,6 +47,19 @@ const value = imagery.sampleAt(0.5, 0.25, 19, 0); // point of the pyramid, x eas
 ```
 
 Pass `create` to build another grid type from each stitched raster, as `@spacexr/dem` does to compute height ranges.
+
+## Declaring the registration
+
+`registration` is required, with no default, where data is imported: on `WebTileSource`, `RasterPyramid`, `DemPyramid`, `StitchedRasterGrids` and `ISourceTileMatrix`. It belongs to the data, so read it from the source or measure it: a wrong declaration moves the surface half a pixel without any other sign. Leaving it out does not compile, and a missing or unknown value throws a `TypeError` for callers the compiler does not reach, when the object is built, or when a matrix is first read. The rule and the registration of each kind of source are in [docs/raster.md](../../../docs/raster.md#stitching).
+
+`prestitched` is deprecated. It no longer decides anything: it does not replace `registration`, and a value that disagrees with it throws a `TypeError`. Remove it when you declare the registration:
+
+| Before                          | Now                     | Effect                                                                                                                  |
+| ------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `prestitched: true`             | `registration: "point"` | none                                                                                                                    |
+| `prestitched: false`, or absent | `registration: "area"`  | the surface moves half a pixel to its true place, is smoothed by half a pixel, and each tile loads its eight neighbours |
+
+A source that exposes its registration, such as `WebTileSource` or a DEM preset, passes it on: `registration: source.registration`.
 
 ## Draping
 

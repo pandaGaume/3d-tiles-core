@@ -15,7 +15,11 @@ npm install @spacexr/tiles
 ```ts
 import { TileNeighbor, TilePyramid, WebMercatorTileMetrics, WebTileSource } from "@spacexr/tiles";
 
-const source = new WebTileSource({ urlTemplate: "https://tile.example.com/{z}/{x}/{y}.png", metrics: new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 19 }) });
+const source = new WebTileSource({
+    urlTemplate: "https://tile.example.com/{z}/{x}/{y}.png",
+    metrics: new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 19 }),
+    registration: "area", // required: where the samples of the tiles lie, see docs/raster.md
+});
 const pyramid = new TilePyramid({
     load: async (address) => {
         const result = await source.fetchTile(address);

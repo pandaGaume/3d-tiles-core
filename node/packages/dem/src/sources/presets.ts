@@ -31,6 +31,8 @@ export function createMapzenTerrariumSource(options: IPresetOptions = {}): IDemT
             id: "mapzen-terrarium",
             urlTemplate: MAPZEN_TERRARIUM_URL,
             metrics: new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 15, tileSize: 256 }),
+            // Its code sets the origin of each tile on its corner, and consecutive levels agree with centred pixels.
+            registration: "area",
             attribution: MAPZEN_TERRARIUM_ATTRIBUTION,
             ...(options.client ? { client: options.client } : {}),
         }),

@@ -118,6 +118,11 @@ describe("source projections", () => {
         expect((pixel.y + 0.5) / (8 * 256)).toBeCloseTo(v, 10);
     });
 
+    it("refuses a matrix that does not declare its registration", () => {
+        const undeclared = { ...webMercatorTileMatrix(3), registration: undefined };
+        expect(() => sourcePixelCoordinates(undeclared as never, { x: 0, y: 0 })).toThrow(TypeError);
+    });
+
     it("leaves the caps out of Web Mercator matrices", () => {
         const mercator = new WebMercatorProjection();
         const matrix = webMercatorTileMatrix(2);
@@ -141,7 +146,17 @@ describe("WMTS capabilities", () => {
         expect(layer.format).toBe("image/jpeg");
         expect(layer.boundingBox).toEqual([-180, -90, 180, 90]);
         expect(layer.matrices).toHaveLength(9);
-        expect(layer.matrices[0]).toEqual({ identifier: "0", originX: -180, originY: 90, pixelSize: 180 / 256, tileWidth: 256, tileHeight: 256, matrixWidth: 2, matrixHeight: 1 });
+        expect(layer.matrices[0]).toEqual({
+            identifier: "0",
+            registration: "area",
+            originX: -180,
+            originY: 90,
+            pixelSize: 180 / 256,
+            tileWidth: 256,
+            tileHeight: 256,
+            matrixWidth: 2,
+            matrixHeight: 1,
+        });
         expect(layer.matrices[0]).toEqual(geographicTileMatrix(0));
         expect(layer.matrices[8]).toEqual(geographicTileMatrix(8));
         expect(wmtsTileUrl(layer, layer.matrices[2]!, 1, 3)).toBe("https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/2/1/3.jpg");
@@ -242,7 +257,17 @@ describe("resampling a tile of the cube", () => {
             "a south polar source",
             {
                 projection: MOON_SOUTH,
-                matrix: { identifier: "p", originX: -500000, originY: 500000, pixelSize: 500, tileWidth: 256, tileHeight: 256, matrixWidth: 8, matrixHeight: 8 },
+                matrix: {
+                    identifier: "p",
+                    registration: "area",
+                    originX: -500000,
+                    originY: 500000,
+                    pixelSize: 500,
+                    tileWidth: 256,
+                    tileHeight: 256,
+                    matrixWidth: 8,
+                    matrixHeight: 8,
+                },
             },
             { face: CubeFace.South, lod: 4, x: 8, y: 7 },
         ],
@@ -341,5 +366,23 @@ describe("heights and blends", () => {
         expect(capBlendWeight(planetocentricDirection(-77.5, 200), 75, 80)).toBeCloseTo(0.5, 9);
         expect(capBlendWeight(planetocentricDirection(77.5, 10), 75, 80)).toBeCloseTo(0.5, 9);
         expect(() => capBlendWeight({ x: 1, y: 0, z: 0 }, 80, 75)).toThrow(RangeError);
+    });
+});
+
+describe("registration of a tile matrix", () => {
+    const matrix = { identifier: "0", originX: 0, originY: 100, pixelSize: 10, tileWidth: 10, tileHeight: 10, matrixWidth: 1, matrixHeight: 1 };
+
+    it("centres the pixels of an area matrix half a pixel from its origin", () => {
+        expect(sourcePixelCoordinates({ ...matrix, registration: "area" }, { x: 5, y: 95 })).toEqual({ x: 0, y: 0 });
+    });
+
+    it("places the first sample of a point matrix on its origin", () => {
+        expect(sourcePixelCoordinates({ ...matrix, registration: "point" }, { x: 0, y: 100 })).toEqual({ x: 0, y: 0 });
+        expect(sourcePixelCoordinates({ ...matrix, registration: "point" }, { x: 5, y: 95 })).toEqual({ x: 0.5, y: 0.5 });
+    });
+
+    it("reads WMTS layers in area registration", () => {
+        expect(webMercatorTileMatrix(0).registration).toBe("area");
+        expect(geographicTileMatrix(0).registration).toBe("area");
     });
 });

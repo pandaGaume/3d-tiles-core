@@ -1,4 +1,12 @@
-import { TileNeighbor, tileAddressKey as key, tileNeighborAddress, type ITileAddress, type ITileNeighborOptions } from "@spacexr/tiles";
+import {
+    TileNeighbor,
+    assertRasterRegistration,
+    tileAddressKey as key,
+    tileNeighborAddress,
+    type ITileAddress,
+    type ITileNeighborOptions,
+    type RasterRegistration,
+} from "@spacexr/tiles";
 
 import { allocateLike, createRasterGrid, type IRasterGrid } from "./raster-grid";
 
@@ -9,16 +17,40 @@ export interface IStitchedRasterGridsOptions<TGrid extends IRasterGrid> extends 
     /** Builds each stitched grid. Defaults to a plain {@link IRasterGrid}. */
     create?: RasterGridFactory<TGrid>;
     /**
-     * Tiles already hold their shared edges: `(w + 1) x (h + 1)` samples in `point` registration, as a tile service of
-     * the cube index produces them. Nothing is taken from the neighbours. Defaults to false.
+     * Where the samples of the tiles lie, declared by their source. Required, with no default.
+     *
+     * - `area`: `w x h` pixels centred half a pixel from the edges. Each stitched sample lies on a corner of the pixels and
+     *   is the mean of the four pixels around it, read from the eight neighbours near the edges.
+     * - `point`: tiles already hold their shared edges, `(w + 1) x (h + 1)` samples, as a tile service of the cube index
+     *   produces them. Nothing is taken from the neighbours.
+     */
+    registration: RasterRegistration;
+    /**
+     * @deprecated Declare `registration` alone: `true` is `point`, `false` is `area`. This option no longer decides
+     *     anything and does not replace `registration`: a value that disagrees with it is rejected.
      */
     prestitched?: boolean;
+}
+
+/** Rejects a missing or unknown registration, and a deprecated `prestitched` that disagrees with it. */
+function assertDeclaredRegistration(registration: RasterRegistration, prestitched: boolean | undefined): void {
+    if (prestitched !== undefined) {
+        const meant = prestitched ? "point" : "area";
+        if (registration !== meant) {
+            throw new TypeError(
+                `prestitched is deprecated and does not replace registration: prestitched: ${String(prestitched)} is registration: "${meant}", declared ${String(registration)}.`
+            );
+        }
+    }
+    assertRasterRegistration(registration);
 }
 
 interface IStitchedEntry<TGrid extends IRasterGrid> {
     readonly address: ITileAddress;
     /** `(width + 1) x (height + 1)` samples, row-major from the north-west corner. */
     readonly data: TGrid["data"];
+    /** Pixels of a tile in `area` registration, `width x height`. */
+    readonly pixels?: TGrid["data"];
     readonly width: number;
     readonly height: number;
     readonly channels: number;
@@ -28,25 +60,29 @@ interface IStitchedEntry<TGrid extends IRasterGrid> {
 /**
  * Rasters of neighbouring tiles stitched together, as SpaceXR does for its elevation textures.
  *
- * A tile of `w x h` pixels does not reach its east and south edges: its last pixels lie half a pixel inside the
- * tile, so two neighbouring tiles never share a sample. Heights and colours alike then show a seam once interpolated.
- * Each tile therefore receives one extra column and one extra row, `(w + 1) x (h + 1)` samples in `point`
- * registration:
+ * A tile of `w x h` pixels does not reach its edges: its pixels lie half a pixel inside the tile, so two neighbouring
+ * tiles never share a sample, and heights and colours alike show a seam once interpolated. Each tile therefore becomes
+ * `(w + 1) x (h + 1)` samples in `point` registration, on the corners of its pixels: each one is the mean of the four
+ * pixels around it, so the surface stays where the source placed it, smoothed by half a pixel.
  *
- * - the extra column is the first column of the east neighbour `E`;
- * - the extra row is the first row of the south neighbour `S`;
- * - the extra corner is the first sample of the south-east neighbour `SE`.
+ * Near an edge, the pixels come from the eight neighbours. Until a neighbour is added its pixels are left out. Adding a
+ * tile also updates the corners it touches in the tiles already present, so that the arrival order does not matter.
+ * Shared edges then hold the same samples on both sides, and grids sampled with `point` registration meet without seams.
  *
- * Until a neighbour is added, its part repeats the edge of the tile itself. Adding a tile also completes the tiles
- * already present on its west, north and north-west, so that the arrival order does not matter. Shared edges then
- * hold the same samples on both sides, and grids sampled with `point` registration meet without seams.
+ * Generated tiles already hold samples of the corner lattice, `x + i / w` in tile units, `w x h` per tile: they only
+ * receive the first column of their east neighbour, the first row of their south neighbour and the first sample of their
+ * south-east neighbour.
  */
 export class StitchedRasterGrids<TGrid extends IRasterGrid = IRasterGrid> {
     private readonly entries = new Map<string, IStitchedEntry<TGrid>>();
     private readonly create: RasterGridFactory<TGrid>;
 
-    /** @param options - Neighbour lookup, where `wrapX` stitches the antimeridian of a global pyramid, and grid factory. */
-    public constructor(private readonly options: IStitchedRasterGridsOptions<TGrid> = {}) {
+    /**
+     * @param options - Registration of the tiles, neighbour lookup, where `wrapX` stitches the antimeridian of a global pyramid, and grid factory.
+     * @throws TypeError When the registration is missing or unknown, or when the deprecated `prestitched` disagrees with it.
+     */
+    public constructor(private readonly options: IStitchedRasterGridsOptions<TGrid>) {
+        assertDeclaredRegistration(options.registration, options.prestitched);
         this.create = options.create ?? ((width, height, channels, data) => createRasterGrid(width, height, channels, data) as TGrid);
     }
 
@@ -66,12 +102,15 @@ export class StitchedRasterGrids<TGrid extends IRasterGrid = IRasterGrid> {
     /**
      * Adds or replaces the raster of a tile.
      *
+     * @param samples - `generated` for a tile generated below the source. In `area` registration it holds samples of the
+     *     corner lattice; in `point` registration it holds its shared edges, like a tile of the source.
      * @returns The tiles whose stitched grid changed: the tile itself and the neighbours it completed.
      * @throws RangeError When a neighbour already present has a different size or number of channels.
      */
-    public add(address: ITileAddress, grid: IRasterGrid<TGrid["data"]>): ITileAddress[] {
-        if (this.options.prestitched) {
-            if (grid.width < 2 || grid.height < 2) throw new RangeError("A prestitched raster holds at least 2 x 2 samples.");
+    public add(address: ITileAddress, grid: IRasterGrid<TGrid["data"]>, samples: "source" | "generated" = "source"): ITileAddress[] {
+        if (this.options.registration === "area" && samples === "source") return this.addPixels(address, grid);
+        if (this.options.registration === "point") {
+            if (grid.width < 2 || grid.height < 2) throw new RangeError("A raster in point registration holds at least 2 x 2 samples.");
             const stitched = this.create(grid.width, grid.height, grid.channels, grid.data);
             const own: IStitchedEntry<TGrid> = {
                 address: { ...address },
@@ -130,9 +169,146 @@ export class StitchedRasterGrids<TGrid extends IRasterGrid = IRasterGrid> {
         return changed;
     }
 
+    /** Stitches a tile of pixels, and updates the corners it touches in the tiles already present. */
+    private addPixels(address: ITileAddress, grid: IRasterGrid<TGrid["data"]>): ITileAddress[] {
+        const { width, height, channels } = grid;
+        const data = allocateLike(grid.data, (width + 1) * (height + 1) * channels);
+        const entry: IStitchedEntry<TGrid> = { address: { ...address }, data, pixels: grid.data, width, height, channels, grid: undefined as unknown as TGrid };
+        this.entries.set(key(address), entry);
+        fillInnerCorners(entry);
+        writeCorners(entry, this.tilesAround(entry), 0, width, 0, height, true);
+        entry.grid = this.create(width + 1, height + 1, channels, data);
+
+        const completed = new Map<string, IStitchedEntry<TGrid>>();
+        this.tilesAround(entry).forEach((neighbor, position) => {
+            if (!neighbor || neighbor === entry) return;
+            const [columnFrom, columnTo, rowFrom, rowTo] = cornersTouching(position, width, height);
+            writeCorners(neighbor, this.tilesAround(neighbor), columnFrom, columnTo, rowFrom, rowTo, false);
+            completed.set(key(neighbor.address), neighbor);
+        });
+        for (const neighbor of completed.values()) neighbor.grid = this.create(width + 1, height + 1, channels, neighbor.data);
+        return [entry.address, ...[...completed.values()].map((neighbor) => neighbor.address)];
+    }
+
+    /** The tile and its neighbours, indexed by {@link TileNeighbor}. A tile wrapping around a level of one column is its own neighbour. */
+    private tilesAround(entry: IStitchedEntry<TGrid>): readonly (IStitchedEntry<TGrid> | undefined)[] {
+        const { address, width, height, channels } = entry;
+        return AROUND.map((position) => {
+            if (position === TileNeighbor.C) return entry;
+            const neighborAddress = tileNeighborAddress(address, position, this.options);
+            const found = neighborAddress ? this.entries.get(key(neighborAddress)) : undefined;
+            if (found && (found.width !== width || found.height !== height || found.channels !== channels)) {
+                throw new RangeError(`Tile ${key(found.address)} has ${found.width} x ${found.height} x ${found.channels} values, expected ${width} x ${height} x ${channels}.`);
+            }
+            return found;
+        });
+    }
+
     /** Forgets a tile. The neighbours keep the edges it gave them. */
     public delete(address: ITileAddress): boolean {
         return this.entries.delete(key(address));
+    }
+}
+
+const AROUND: readonly TileNeighbor[] = [
+    TileNeighbor.NW,
+    TileNeighbor.N,
+    TileNeighbor.NE,
+    TileNeighbor.W,
+    TileNeighbor.C,
+    TileNeighbor.E,
+    TileNeighbor.SW,
+    TileNeighbor.S,
+    TileNeighbor.SE,
+];
+
+/** Columns and rows, `[columnFrom, columnTo, rowFrom, rowTo]`, of the corners of a tile touching a tile added at `position` of it. */
+function cornersTouching(position: number, width: number, height: number): readonly [number, number, number, number] {
+    const column = position % 3;
+    const row = Math.floor(position / 3);
+    return [
+        column === 1 ? 0 : column === 2 ? 0 : width,
+        column === 1 ? width : column === 2 ? 0 : width,
+        row === 1 ? 0 : row === 2 ? 0 : height,
+        row === 1 ? height : row === 2 ? 0 : height,
+    ];
+}
+
+function isFloat(data: IRasterGrid["data"]): boolean {
+    return data instanceof Float32Array || data instanceof Float64Array;
+}
+
+/** Corners away from the edges: each reads four pixels of the tile itself. */
+function fillInnerCorners<TGrid extends IRasterGrid>(entry: IStitchedEntry<TGrid>): void {
+    const { width, height, channels, data } = entry;
+    const pixels = entry.pixels!;
+    const stride = width * channels;
+    const stitchedStride = (width + 1) * channels;
+    const float = isFloat(data);
+    for (let row = 1; row < height; row++) {
+        for (let column = 1; column < width; column++) {
+            const southEast = (row * width + column) * channels;
+            const target = row * stitchedStride + column * channels;
+            for (let channel = 0; channel < channels; channel++) {
+                const index = southEast + channel;
+                const a = pixels[index - stride - channels]!;
+                const b = pixels[index - stride]!;
+                const c = pixels[index - channels]!;
+                const d = pixels[index]!;
+                const mean = (a + b + c + d) / 4;
+                if (float && Number.isNaN(mean)) {
+                    let sum = 0;
+                    let count = 0;
+                    for (const value of [a, b, c, d]) {
+                        if (Number.isNaN(value)) continue;
+                        sum += value;
+                        count++;
+                    }
+                    data[target + channel] = count === 0 ? Number.NaN : sum / count;
+                } else data[target + channel] = float ? mean : Math.round(mean);
+            }
+        }
+    }
+}
+
+/**
+ * Writes corners of a tile from the four pixels around each one, leaving out those of a tile not present and missing
+ * values. Corners away from the edges are skipped when `edgesOnly`.
+ */
+function writeCorners<TGrid extends IRasterGrid>(
+    entry: IStitchedEntry<TGrid>,
+    around: readonly (IStitchedEntry<TGrid> | undefined)[],
+    columnFrom: number,
+    columnTo: number,
+    rowFrom: number,
+    rowTo: number,
+    edgesOnly: boolean
+): void {
+    const { width, height, channels, data } = entry;
+    const float = isFloat(data);
+    const stitchedStride = (width + 1) * channels;
+    for (let row = rowFrom; row <= rowTo; row++) {
+        for (let column = columnFrom; column <= columnTo; column++) {
+            if (edgesOnly && column > 0 && column < width && row > 0 && row < height) continue;
+            for (let channel = 0; channel < channels; channel++) {
+                let sum = 0;
+                let count = 0;
+                for (let y = row - 1; y <= row; y++) {
+                    for (let x = column - 1; x <= column; x++) {
+                        const tileColumn = x < 0 ? 0 : x >= width ? 2 : 1;
+                        const tileRow = y < 0 ? 0 : y >= height ? 2 : 1;
+                        const pixels = around[tileRow * 3 + tileColumn]?.pixels;
+                        if (!pixels) continue;
+                        const value = pixels[((y - (tileRow - 1) * height) * width + x - (tileColumn - 1) * width) * channels + channel]!;
+                        if (Number.isNaN(value)) continue;
+                        sum += value;
+                        count++;
+                    }
+                }
+                const mean = count === 0 ? Number.NaN : sum / count;
+                data[row * stitchedStride + column * channels + channel] = float ? mean : Math.round(mean);
+            }
+        }
     }
 }
 

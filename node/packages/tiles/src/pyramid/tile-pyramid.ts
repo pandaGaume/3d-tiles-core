@@ -34,11 +34,11 @@ export interface ITilePyramidOptions<T> {
     /** Wraps columns around the antimeridian, for pyramids covering every longitude. Defaults to false. */
     wrapX?: boolean;
     /**
-     * Neighbours loaded with every tile, for contents that need them: `[E, S, SE]` to stitch the extra column and
-     * row of a raster, or every position to prepare a move. A missing or failing neighbour is ignored. Defaults to
-     * none.
+     * Neighbours loaded with every tile, or with a given tile, for contents that need them: `[E, S, SE]` to stitch the
+     * extra column and row of a raster, or every position to prepare a move. A missing or failing neighbour is ignored.
+     * Defaults to none.
      */
-    prefetch?: readonly TileNeighbor[];
+    prefetch?: readonly TileNeighbor[] | ((address: ITileAddress) => readonly TileNeighbor[]);
     /** Called when the content of a tile is loaded and still cached. */
     onLoad?: (address: ITileAddress, content: T) => void;
     /** Called when a tile leaves the cache. */
@@ -108,7 +108,8 @@ export class TilePyramid<T> {
      */
     public async load(address: ITileAddress): Promise<ITilePyramidRegion<T> | undefined> {
         const area = this.areaOf(address);
-        const neighbors = (this.options.prefetch ?? [])
+        const { prefetch = [] } = this.options;
+        const neighbors = (typeof prefetch === "function" ? prefetch(area.ancestor) : prefetch)
             .map((position) => tileNeighborAddress(area.ancestor, position, { wrapX: this.options.wrapX ?? false }))
             .filter((neighbor) => neighbor !== undefined);
         const [content] = await Promise.all([this.tile(area.ancestor), ...neighbors.map((neighbor) => this.tile(neighbor).catch(() => undefined))]);
