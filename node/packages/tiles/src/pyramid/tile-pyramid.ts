@@ -29,6 +29,11 @@ export interface ITilePyramidOptions<T> {
     load: TileContentLoader<T>;
     /** Deepest level of the pyramid; deeper tiles use the sub-area of their ancestor at this level (overzoom). */
     maxLOD: number;
+    /**
+     * Level of the pyramid tile serving a tile, for a sparse pyramid whose depth varies from place to place. A tile deeper
+     * than the data at its place then uses the sub-area of its ancestor there. Defaults to the same level everywhere.
+     */
+    servingLevel?: (address: ITileAddress) => number;
     /** Tiles kept in memory. Defaults to 256. */
     cacheEntries?: number;
     /** Wraps columns around the antimeridian, for pyramids covering every longitude. Defaults to false. */
@@ -93,7 +98,8 @@ export class TilePyramid<T> {
 
     /** The pyramid tile serving a tile and the part of it the tile covers. */
     public areaOf(address: ITileAddress): ITileAreaInAncestor {
-        return tileAreaInAncestor(address, address.lod - this.sourceLevel(address.lod));
+        const level = this.options.servingLevel ? Math.min(this.options.servingLevel(address), this.sourceLevel(address.lod)) : this.sourceLevel(address.lod);
+        return tileAreaInAncestor(address, address.lod - level);
     }
 
     /** Loaded content of a pyramid tile, without loading it. */

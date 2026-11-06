@@ -27,13 +27,18 @@ export function cubeDemTileLoader(source: CelestialTileSource, decoder: IDemDeco
 
 /** Options of {@link cubeDemPyramid}. */
 export interface ICubeDemPyramidOptions extends Pick<IDemPyramidOptions, "cacheEntries" | "childHeightRanges" | "onStitched"> {
-    /** Deepest level of the terrain tiles: levels below the dataset interpolate it. Defaults to its deepest level. */
+    /**
+     * Deepest level of generated tiles, which interpolate the dataset bilinearly below its deepest level, the same everywhere.
+     * Defaults to none: a tile deeper than the dataset at its place, inside or outside its subtrees, reads a sub-area of the
+     * deepest tile there. A slope read on generated tiles is constant by parts, which shows as a checkerboard in lighting: a
+     * renderer computing normals from the samples should leave it unset.
+     */
     maxLOD?: number;
 }
 
 /**
  * The heights of an elevation dataset of a tile service as one surface per face of the cube. Tiles keep their shared
- * edges; those the dataset does not declare, and the levels below it, interpolate their parent.
+ * edges, and a tile the dataset does not declare reads a sub-area of the deepest tile at its place.
  */
 export function cubeDemPyramid(source: CelestialTileSource, decoder: IDemDecoder, options: ICubeDemPyramidOptions = {}): DemPyramid {
     const { maxLOD, ...rest } = options;
@@ -42,7 +47,7 @@ export function cubeDemPyramid(source: CelestialTileSource, decoder: IDemDecoder
         registration: "point",
         maxLOD: source.deepestLOD,
         load: cubeDemTileLoader(source, decoder),
-        ...(maxLOD !== undefined && maxLOD > source.deepestLOD ? { generation: { maxLOD } } : {}),
+        ...(maxLOD !== undefined && maxLOD > source.deepestLOD ? { generation: { maxLOD } } : { servingLevel: (address: ITileAddress) => source.servingLevel(address) }),
     });
 }
 

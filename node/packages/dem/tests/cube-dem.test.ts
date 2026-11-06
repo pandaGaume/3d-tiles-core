@@ -45,6 +45,30 @@ function sourceReturning(bytes: Uint8Array): { source: CelestialTileSource; fetc
 }
 
 describe("cube DEM tiles", () => {
+    it("read the deepest tile at their place, without generating levels beside a subtree", async () => {
+        const fetched: string[] = [];
+        const client = new TileHttpClient();
+        vi.spyOn(client, "fetchTile").mockImplementation(async (url: string) => {
+            fetched.push(url);
+            return { status: "ok", bytes: new Uint8Array([1]) } as never;
+        });
+        const source = new CelestialTileSource(dataset({ maxLOD: 1, subtrees: [{ face: 5, lod: 2, x: 0, y: 0, maxLOD: 3 }] }), { client });
+        const pyramid = cubeDemPyramid(
+            source,
+            decoder(() => 7)
+        );
+        // Beside the subtree: the deepest level everywhere, not a generated tile of level 3.
+        expect(pyramid.rasters.areaOf({ face: 1, lod: 3, x: 0, y: 0 }).ancestor).toEqual({ face: 1, lod: 1, x: 0, y: 0 });
+        expect(pyramid.rasters.areaOf({ face: 5, lod: 3, x: 7, y: 7 }).ancestor.lod).toBe(1);
+        // Inside it: its own level, and beyond it the deepest tile there.
+        expect(pyramid.rasters.areaOf({ face: 5, lod: 3, x: 0, y: 0 }).ancestor.lod).toBe(3);
+        expect(pyramid.rasters.areaOf({ face: 5, lod: 5, x: 0, y: 0 }).ancestor.lod).toBe(3);
+        await pyramid.tileHeights({ face: 1, lod: 3, x: 0, y: 0 });
+        expect(fetched).toEqual(["https://tiles.example.com/1/1/0/0.png"]);
+        // Heights are read at the level of the place, inside or outside the subtree.
+        expect(pyramid.heightAt(0.1, 0.1, 3, 1)).toBe(7);
+    });
+
     it("decode the tiles of a dataset with its encoding", async () => {
         const { source } = sourceReturning(new Uint8Array([9]));
         const dem = decoder((bytes) => bytes[0]!);

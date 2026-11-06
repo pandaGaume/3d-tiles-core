@@ -45,14 +45,14 @@ The output is not a PNG byte stream. Store it with a lossless image encoder that
 
 ## Tiles of a celestial body
 
-`cubeDemPyramid` reads an elevation dataset of a tile service on the [cube index](https://github.com/pandaGaume/3d-tiles-core/blob/main/docs/celestial-tiling.md): radial heights, one surface per face, poles included. Tiles the dataset does not declare interpolate their parent.
+`cubeDemPyramid` reads an elevation dataset of a tile service on the [cube index](https://github.com/pandaGaume/3d-tiles-core/blob/main/docs/celestial-tiling.md): radial heights, one surface per face, poles included. The depth of a dataset may vary from place to place, with its subtrees: a tile deeper than the data at its place reads a sub-area of the deepest tile there. With `maxLOD`, tiles are generated bilinearly instead, and a slope read on them shows as a checkerboard in lighting.
 
 ```ts
 import { cubeDemPyramid, tileSurfaceNormal } from "@spacexr/dem";
 import { CelestialTileSource } from "@spacexr/tiles";
 
 const source = new CelestialTileSource(await (await fetch("https://tiles.example.com/moon/lola.json")).json());
-const pyramid = cubeDemPyramid(source, decoder, { maxLOD: 14 });
+const pyramid = cubeDemPyramid(source, decoder);
 const heights = await pyramid.tileHeights({ face: 5, lod: 11, x: 1024, y: 1023 });
 const normal = tileSurfaceNormal(source.surface, { face: 5, lod: 11, x: 1024, y: 1023 }, 0.5, 0.5, 1 / 16, heights!.sampler);
 ```

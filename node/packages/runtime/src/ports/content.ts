@@ -29,6 +29,11 @@ export type ContentLoadResult<TContentHandle> =
            */
           /** A volume measured on the content. A function is evaluated again when the vertical scale changes. */
           tileBoundingVolume?: IBoundingVolume | (() => IBoundingVolume);
+          /**
+           * Lowest and highest heights measured on the content, such as a DEM tile, over the reference surface, in metres.
+           * Evaluated again when the vertical scale changes, whose factor it includes.
+           */
+          tileHeightRange?: () => readonly [number, number];
       }
     | {
           kind: "external-tileset";

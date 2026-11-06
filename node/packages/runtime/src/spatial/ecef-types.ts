@@ -69,6 +69,8 @@ export interface IEcefSpatialState {
     boundingSphere?: IBoundingSphere3;
     /** Optional enclosing ECEF axis-aligned box. */
     boundingBox?: IAxisAlignedBox;
+    /** Lowest and highest heights of the terrain of the tile over the reference surface, in metres, when known. */
+    heightRange?: readonly [number, number];
     /** World-space geometric error in metres. */
     geometricError: number;
     /** Report of the conversions and approximations applied, for tiles located by `SPACEXR_bounding_volume_utm`. */
@@ -85,6 +87,17 @@ export interface IEcefSpatialMetricOptions {
     geodeticSystem?: GeodeticSystem;
     /** Enables conservative ellipsoid horizon culling. Defaults to `true`. */
     horizonCulling?: boolean;
+    /**
+     * Test of the horizon.
+     *
+     * - `plane`, the default: tiles behind the plane of the horizon of the smallest sphere of the ellipsoid. It suits oblate
+     *   bodies, where that sphere lies below the surface. It culls a summit that still shows above the horizon, and on a
+     *   sphere what lies deeper below the reference surface than the camera is above it.
+     * - `tile-heights`: the horizons of the camera and of the highest point of the tile, from the radius of the body and the
+     *   heights of the tile. The hiding sphere lies below the lowest terrain measured so far, since a sight line may pass over
+     *   any basin on its way. For spherical bodies.
+     */
+    horizon?: "plane" | "tile-heights";
     /** Viewport height fallback in pixels. Defaults to 1080. */
     defaultViewportHeight?: number;
     /** Vertical field-of-view fallback in radians. Defaults to 60 degrees. */

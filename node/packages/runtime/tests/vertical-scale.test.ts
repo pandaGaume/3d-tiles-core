@@ -198,6 +198,45 @@ describe("TileRuntime with a vertical scale", () => {
         await runtime.dispose();
     });
 
+    it("gives the metric the heights measured on the content, again when the scale changes", async () => {
+        const scale = new VerticalScale(1);
+        const ranges: Array<readonly [number, number] | undefined> = [];
+        const adapter: IRuntimeAdapter<ICamera, ISpatial, object, never> = {
+            tilesets: { load: async () => ({ tileset }) },
+            spatial: {
+                derive: (context) => {
+                    ranges.push(context.heightRange);
+                    return { volume: context.tile.boundingVolume };
+                },
+                isVisible: () => true,
+                screenSpaceError: () => 0,
+            },
+            activation: {
+                activate: async (context) => {
+                    for (const content of context.pendingContents)
+                        await context.readiness.ready(content.id, {
+                            kind: "renderable",
+                            handle: {},
+                            tileBoundingVolume: () => ({ sphere: [0, 0, 0, 10 * scale.value] }),
+                            tileHeightRange: () => [-100 * scale.value, 200 * scale.value],
+                        });
+                },
+                deactivate: () => undefined,
+            },
+            presentation: { present: () => undefined, hide: () => undefined, release: () => undefined },
+        };
+        const runtime = new TileRuntime({ id: "heights", uri: "memory://tileset.json", adapter, verticalScale: scale });
+        await settle(runtime);
+        // Unknown before the content loads, measured after.
+        expect(ranges[0]).toBeUndefined();
+        expect(ranges.at(-1)).toEqual([-100, 200]);
+
+        scale.set(3);
+        await runtime.processFrame();
+        expect(ranges.at(-1)).toEqual([-300, 600]);
+        await runtime.dispose();
+    });
+
     it("keeps a volume measured once", async () => {
         const scale = new VerticalScale(1);
         const runtime = runtimeOf(scale, { sphere: [0, 0, 0, 7] });

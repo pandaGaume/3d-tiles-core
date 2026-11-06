@@ -8,6 +8,7 @@ import {
     boundsFromSphere,
     boxesIntersect,
     isSphereBelowConservativeHorizon,
+    isSphereBeyondHorizon,
     sphereOutsidePlane,
 } from "./bounding-volumes";
 import type { IEcefCameraFrame, IEcefSpatialMetricOptions, IEcefSpatialState } from "./ecef-types";
@@ -29,6 +30,9 @@ const DEFAULT_VERTICAL_FOV_RADIANS = Math.PI / 3;
 export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcefSpatialState> {
     private readonly system: GeodeticSystem;
     private readonly horizonCulling: boolean;
+    private readonly horizon: "plane" | "tile-heights";
+    /** Lowest terrain measured on any tile so far, over the reference surface, in metres. */
+    private lowestHeight = 0;
     private readonly defaultViewportHeight: number;
     private readonly defaultVerticalFovRadians: number;
     private readonly utmOptions: IUtmPlacementOptions;
@@ -42,6 +46,7 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
     public constructor(options: IEcefSpatialMetricOptions = {}) {
         this.system = options.geodeticSystem ?? GeodeticSystem.WGS84;
         this.horizonCulling = options.horizonCulling ?? true;
+        this.horizon = options.horizon ?? "plane";
         this.defaultViewportHeight = options.defaultViewportHeight ?? DEFAULT_VIEWPORT_HEIGHT;
         this.defaultVerticalFovRadians = options.defaultVerticalFovRadians ?? DEFAULT_VERTICAL_FOV_RADIANS;
         this.utmOptions = options.utm ?? {};
@@ -80,7 +85,9 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
      * @returns Spatial state expressed in ECEF metres.
      */
     public derive(context: ISpatialDerivationContext<IEcefSpatialState>): IEcefSpatialState {
-        const state = this.deriveUnscaled(context);
+        const unscaled = this.deriveUnscaled(context);
+        const state = context.heightRange ? { ...unscaled, heightRange: context.heightRange } : unscaled;
+        if (context.heightRange) this.lowestHeight = Math.min(this.lowestHeight, context.heightRange[0]);
         return this.vertical ? placeVertically(state, this.vertical, context.parent) : state;
     }
 
@@ -122,11 +129,13 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
     public isVisible(spatial: IEcefSpatialState, camera: IEcefCameraFrame): boolean {
         if (camera.clipBounds && spatial.boundingBox && !boxesIntersect(spatial.boundingBox, camera.clipBounds)) return false;
         if (!spatial.boundingSphere) return true;
-        if (
-            this.horizonCulling &&
-            isSphereBelowConservativeHorizon(spatial.boundingSphere, camera.position, this.system.ellipsoid.minimumRadius)
-        ) {
-            return false;
+        if (this.horizonCulling) {
+            const radius = this.system.ellipsoid.minimumRadius;
+            const hidden =
+                this.horizon === "tile-heights"
+                    ? isSphereBeyondHorizon(spatial.boundingSphere, camera.position, radius, this.lowestHeight, spatial.heightRange)
+                    : isSphereBelowConservativeHorizon(spatial.boundingSphere, camera.position, radius);
+            if (hidden) return false;
         }
         if (camera.frustumPlanes?.some((plane) => sphereOutsidePlane(spatial.boundingSphere!, plane))) return false;
         return true;

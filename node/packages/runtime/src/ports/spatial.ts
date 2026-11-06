@@ -3,6 +3,8 @@ import type { ITile } from "@spacexr/3d-tiles-core";
 export interface ISpatialDerivationContext<TSpatial> {
     tile: ITile;
     parent?: TSpatial;
+    /** Lowest and highest heights of the terrain of the tile over the reference surface, in metres, vertical scale applied, when known. */
+    heightRange?: readonly [number, number];
 }
 
 export interface IScreenSpaceErrorContext<TCamera, TSpatial> {

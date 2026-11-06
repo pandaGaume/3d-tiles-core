@@ -8,6 +8,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- Elevation whose depth varies from place to place: `servingLevel` of `CelestialTileSource`, `TilePyramid` and `RasterPyramid`, and `terrainDataLevel` of `DrapeInstanceCut`. `cubeDemPyramid` reads a sub-area of the deepest tile at each place instead of interpolating the levels a dataset does not declare, and `isAvailable` no longer scans its subtrees.
+- `completeTileCover` of `@spacexr/raster`: the tiles completing a cut into a cover of its roots, for a renderer to draw coarse terrain where a selection left no tile.
+- `workingSetFactor` of the runtime cache: budgets of entries and tiles that grow with what the view uses, and fixed byte budgets. It defaults to fixed budgets.
+- The normals of terrain on the cube read the samples of the source and the DEM across tile edges, turned across cube faces; see `docs/celestial-tiling.md`.
+- `horizon: "tile-heights"` of `EcefSpatialMetric`: the true horizon formula on a spherical body, from its radius, its lowest terrain measured so far and the highest point of each tile, reported with `tileHeightRange` by the content and `heightRange` by an implicit resolver. The default test, a plane, culled terrain below the reference surface of a sphere from a camera above it, and summits still above the horizon. It stays the default: oblate bodies are unchanged.
 - `RasterRegistration` is declared by every source where its data is imported, with no default: `registration` of `WebTileSource`, `RasterPyramid`, `DemPyramid`, `StitchedRasterGrids` and `ISourceTileMatrix`.
 - `@spacexr/tiles/reprojection`: projections, WMTS capabilities, source levels and resampling, from raster sources to the cube index. `docs/cube-sources.md` is the brief of a tile service, for the Solar System Treks and WGS84 sources.
 - `VerticalScale`, the vertical exaggeration shared by a scene: a `TileRuntime` given it derives its tiles again when it changes, and `EcefSpatialMetric` with a `vertical` placement moves objects with it. `tileBoundingVolume` may be a function, evaluated again.

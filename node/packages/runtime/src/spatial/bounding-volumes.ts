@@ -122,6 +122,40 @@ export function sphereOutsidePlane(sphere: IBoundingSphere3, plane: { x: number;
     return plane.x * sphere.center.x + plane.y * sphere.center.y + plane.z * sphere.center.z + plane.w < -sphere.radius;
 }
 
+/**
+ * Whether a tile lies beyond the horizon of a spherical body, from the true formula: a point at distance `p` from the
+ * centre is hidden from a camera at distance `c` by a sphere of radius `r` when their angle exceeds
+ * `acos(r / c) + acos(r / p)`, the horizons of the camera and of the point. The test takes the highest point of the tile.
+ *
+ * The sphere must be solid: a sight line may pass over any basin between the camera and the tile, so it lies below the
+ * lowest terrain of the body, not only of the tile. A tile without known heights uses the extent of its bounding sphere.
+ *
+ * @param bodyRadius - Radius of the reference surface of the body, in metres.
+ * @param lowestHeight - Lowest terrain of the body over that surface, in metres.
+ * @param heightRange - Lowest and highest heights of the tile over that surface, in metres.
+ */
+export function isSphereBeyondHorizon(
+    sphere: IBoundingSphere3,
+    cameraPosition: IVector3,
+    bodyRadius: number,
+    lowestHeight: number,
+    heightRange?: readonly [number, number],
+): boolean {
+    const centreDistance = vectorLength(sphere.center);
+    if (sphere.radius >= centreDistance) return false;
+    const cameraDistance = vectorLength(cameraPosition);
+    const lowest = heightRange ? bodyRadius + heightRange[0] : centreDistance - sphere.radius;
+    const highest = heightRange ? bodyRadius + heightRange[1] : centreDistance + sphere.radius;
+    const occluder = Math.min(bodyRadius + Math.min(0, lowestHeight), lowest);
+    if (occluder <= 0 || cameraDistance <= occluder) return false;
+    const cosine =
+        (sphere.center.x * cameraPosition.x + sphere.center.y * cameraPosition.y + sphere.center.z * cameraPosition.z) /
+        (centreDistance * cameraDistance);
+    const angle = Math.acos(Math.max(-1, Math.min(1, cosine)));
+    const extent = Math.asin(sphere.radius / centreDistance);
+    return angle - extent > Math.acos(occluder / cameraDistance) + Math.acos(occluder / Math.max(occluder, highest));
+}
+
 export function isSphereBelowConservativeHorizon(sphere: IBoundingSphere3, cameraPosition: IVector3, occluderRadius: number): boolean {
     const cameraDistance = vectorLength(cameraPosition);
     if (cameraDistance <= occluderRadius) return false;

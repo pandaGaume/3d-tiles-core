@@ -121,6 +121,9 @@ A scene has one vertical scale `s`, shared by everything in it: terrain, picking
 - The index footprint of a tile is a set of directions; its bounding volume encloses its physical geometry. Culling, picking and screen-space error use the bounding volume.
 - The bounding volume of a terrain tile is an oriented box containing `(r_ref(d) + h) * d` for every direction `d` of the tile and every `h` of its height range. It is computed from at least 5 x 5 directions of the tile at both bounds of the range, enlarged by the sagitta `r * (1 - cos(delta / 2))`, `delta` being the angle between neighbouring directions of that grid and `r` the largest radius.
 - Content that is not a height field, such as buildings, glTF models, tunnels, or the surface of a non-convex body like a comet, is indexed by the tile of its anchor and keeps its own geometry: its bounding volume may leave the footprint of the tile. 3D Tiles bounding volumes already describe that geometry.
+- The normal of terrain comes from the gradient of the heights over the samples of the source, by central differences. It is never computed on levels interpolated below the source, whose slope is constant by parts and shows as a checkerboard. On the edge of a tile, the sample beyond is read in the tile across, turned across a cube face: both sides compute the same slope.
+- A tile lies beyond the horizon of a sphere of radius `r` when its angle from the camera, at distance `c` from the centre, exceeds `acos(r / c) + acos(r / p)`, `p` being the distance of the highest point of the tile. Its heights are measured when its DEM tile is decoded, or prepared by its parent. The hiding sphere must be solid, and the reference surface is not, as 46.6 % of the level 6 tiles of the Moon lie wholly below a reference of 1738.1 km. Nor is a sphere through the lowest point of the tile: a sight line may pass over a deeper basin on its way to a far rim. `r` lies below the lowest terrain of the body, as declared or measured so far. A tile without known heights takes them from its bounding sphere.
+- Tiles are selected for a camera that has already moved when they are drawn, so a renderer selects them in a frustum wider than the view, and draws a whole cover of the body: where the selection left no tile, the coarser tiles beside the cut, reading the DEM of their nearest ancestor in memory until theirs arrives. No margin is enough on its own, as a camera accelerates faster than any prediction, and coarse terrain for a moment is better than a hole.
 - In 3D Tiles, a cube tileset has an explicit root with six children, one per face, each carrying its implicit quadtree, and oriented `box` bounding volumes: a `region` cannot describe a polar face.
 
 ## Layers in other schemes
@@ -167,7 +170,7 @@ A tile service describes each dataset with a descriptor:
 | `subtrees`         | tiles below which levels down to their own `maxLOD` are available, as the polar caps of the Moon |
 | `tiles`            | URL template                                                                                     |
 
-A client never requests a tile outside the declared availability.
+A client never requests a tile outside the declared availability. The depth of a dataset varies from place to place: a client reads a tile deeper than the data at its place as a sub-area of the deepest tile there, and two tiles sharing an edge read the coarser of their data along it, so that they join where a finer source starts.
 
 ## Web Mercator
 

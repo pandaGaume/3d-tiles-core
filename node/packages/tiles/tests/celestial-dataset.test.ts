@@ -67,6 +67,29 @@ describe("CelestialTileSource", () => {
         expect(partial.isAvailable({ face: 2, lod: 6, x: 16, y: 31 })).toBe(false);
     });
 
+    it("gives the deepest level at the place of a tile", () => {
+        const source = new CelestialTileSource({
+            ...LOLA,
+            maxLOD: 2,
+            subtrees: [
+                { face: 5, lod: 3, x: 0, y: 0, maxLOD: 3 },
+                { face: 5, lod: 4, x: 1, y: 1, maxLOD: 5 },
+            ],
+        });
+        // Everywhere.
+        expect(source.servingLevel({ face: 1, lod: 1, x: 0, y: 0 })).toBe(1);
+        expect(source.servingLevel({ face: 1, lod: 9, x: 0, y: 0 })).toBe(2);
+        // Inside the subtrees, at any depth.
+        expect(source.servingLevel({ face: 5, lod: 3, x: 0, y: 0 })).toBe(3);
+        expect(source.servingLevel({ face: 5, lod: 4, x: 0, y: 0 })).toBe(3);
+        expect(source.servingLevel({ face: 5, lod: 4, x: 1, y: 1 })).toBe(4);
+        expect(source.servingLevel({ face: 5, lod: 9, x: 32, y: 32 })).toBe(5);
+        // Beside them.
+        expect(source.servingLevel({ face: 5, lod: 3, x: 7, y: 7 })).toBe(2);
+        expect(source.isAvailable({ face: 5, lod: 4, x: 0, y: 0 })).toBe(false);
+        expect(source.isAvailable({ face: 5, lod: 4, x: 1, y: 1 })).toBe(true);
+    });
+
     it("places its tiles on the declared reference surface", () => {
         const { surface } = new CelestialTileSource({ ...LOLA, referenceRadii: [13000, 11400, 9100] });
         expect(surface.reference.radii).toEqual([13000, 11400, 9100]);

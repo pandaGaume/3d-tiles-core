@@ -1134,6 +1134,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             else delete content.cost;
             if (result.featureMetadata) content.featureMetadata = result.featureMetadata;
             else delete content.featureMetadata;
+            node.contentHeights = result.tileHeightRange;
             if (result.tileBoundingVolume) {
                 const measured = result.tileBoundingVolume;
                 this.refineTileBoundingVolume(node, typeof measured === "function" ? measured : () => measured);
@@ -1170,9 +1171,11 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
      */
     private refineTileBoundingVolume(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>, measured: () => IBoundingVolume): void {
         node.contentBounds = measured;
+        const heightRange = node.contentHeights?.();
         node.spatial = this.adapter.spatial.derive({
             tile: { ...node.source, boundingVolume: measured() },
             ...(node.parent ? { parent: node.parent.spatial } : {}),
+            ...(heightRange ? { heightRange } : {}),
         });
         node.contentBoundsRefined = true;
         this.events.emit({ type: "tile-bounds-refined", tile: node, origin: "content" });
@@ -1192,6 +1195,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             child.spatial = this.adapter.spatial.derive({
                 tile: { ...child.source, boundingVolume: resolved.boundingVolume },
                 parent: node.spatial,
+                ...(child.implicit.heightRange ? { heightRange: child.implicit.heightRange } : {}),
             });
             this.events.emit({ type: "tile-bounds-refined", tile: child, origin: "parent-content" });
         }
@@ -1206,9 +1210,11 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
                 (node.implicit && this.implicitResolver(node.implicit.context)
                     ? this.createImplicitTileSource(node.implicit, node.document).boundingVolume
                     : node.source.boundingVolume);
+            const heightRange = node.contentHeights?.() ?? node.implicit?.heightRange;
             node.spatial = this.adapter.spatial.derive({
                 tile: { ...node.source, boundingVolume },
                 ...(node.parent ? { parent: node.parent.spatial } : {}),
+                ...(heightRange ? { heightRange } : {}),
             });
             this.events.emit({ type: "tile-bounds-refined", tile: node, origin: "vertical-scale" });
             for (const child of node.children) visit(child);
@@ -1569,7 +1575,11 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             };
             source = this.createImplicitTileSource(implicitState, document, true);
         }
-        const spatial = this.adapter.spatial.derive({ tile: source, ...(parent ? { parent: parent.spatial } : {}) });
+        const spatial = this.adapter.spatial.derive({
+            tile: source,
+            ...(parent ? { parent: parent.spatial } : {}),
+            ...(implicitState?.heightRange ? { heightRange: implicitState.heightRange } : {}),
+        });
         const descriptors = implicitState ? [] : source.contents ? [...source.contents] : source.content ? [source.content] : [];
         const refinementMode =
             source.refine === "ADD"
@@ -1634,6 +1644,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             computedGeometricError: computed.geometricError,
             computedContents: computed.contents,
         });
+        if (override?.heightRange) implicit.heightRange = override.heightRange;
+        else delete implicit.heightRange;
         return {
             boundingVolume: override?.boundingVolume ?? computed.boundingVolume,
             geometricError: override?.geometricError ?? computed.geometricError,
@@ -2013,8 +2025,9 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             }
         }
         candidates.sort((left, right) => left.content.lastTouchedFrame - right.content.lastTouchedFrame);
+        const entryBudget = this.contentEntryBudget();
         for (const candidate of candidates) {
-            const reason = this.contentEvictionReason(candidate.content, entries, cpuBytes, gpuBytes, force);
+            const reason = this.contentEvictionReason(candidate.content, entries, cpuBytes, gpuBytes, force, entryBudget);
             if (!reason) continue;
             const releasedCpuBytes = candidate.content.cost?.cpuBytes ?? 0;
             const releasedGpuBytes = candidate.content.cost?.gpuBytes ?? 0;
@@ -2047,15 +2060,34 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         return touchedAt === undefined || this.clock() - touchedAt > this.cacheOptions.unusedRetentionMilliseconds;
     }
 
+    /** Budget of content entries, grown to what the view selects when the budgets are adaptive. */
+    private contentEntryBudget(): number {
+        const { maxContentEntries, workingSetFactor } = this.cacheOptions;
+        if (workingSetFactor <= 0) return maxContentEntries;
+        let selected = 0;
+        for (const node of this.nodes.values()) if (node.selected) selected++;
+        return Math.max(maxContentEntries, selected * workingSetFactor);
+    }
+
+    /** Budget of materialized tiles, grown to what the traversal visits when the budgets are adaptive. */
+    private materializedTileBudget(): number {
+        const { maxMaterializedTiles, workingSetFactor } = this.cacheOptions;
+        if (workingSetFactor <= 0) return maxMaterializedTiles;
+        let visited = 0;
+        for (const node of this.nodes.values()) if (node.lastTouchedFrame === this.frame) visited++;
+        return Math.max(maxMaterializedTiles, visited * workingSetFactor);
+    }
+
     private contentEvictionReason(
         content: IRuntimeContent<TContentHandle>,
         entries: number,
         cpuBytes: number,
         gpuBytes: number,
         force: boolean,
+        entryBudget: number,
     ): RuntimeCacheEvictionReason | undefined {
         if (force || this.isUnusedTooLong(content.lastTouchedFrame)) return "stale";
-        if (entries > this.cacheOptions.maxContentEntries) return "entry-budget";
+        if (entries > entryBudget) return "entry-budget";
         if (cpuBytes > this.cacheOptions.maxContentCpuBytes) return "cpu-budget";
         if (gpuBytes > this.cacheOptions.maxContentGpuBytes) return "gpu-budget";
         return undefined;
@@ -2181,6 +2213,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     }
 
     private async sweepImplicitBranches(force: boolean): Promise<void> {
+        const tileBudget = this.materializedTileBudget();
         const candidates = [...this.nodes.values()]
             .filter((node) => this.isImplicitBranchRoot(node))
             .sort((left, right) => {
@@ -2194,7 +2227,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             const stale = descendants.every((node) => this.isUnusedTooLong(node.lastTouchedFrame));
             let reason: RuntimeCacheEvictionReason | undefined;
             if (force || stale) reason = "stale";
-            else if (this.nodes.size > this.cacheOptions.maxMaterializedTiles) reason = "node-budget";
+            else if (this.nodes.size > tileBudget) reason = "node-budget";
             if (!reason) continue;
             await this.pruneImplicitBranch(parent, descendants, reason);
         }

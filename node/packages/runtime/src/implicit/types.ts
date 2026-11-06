@@ -44,6 +44,8 @@ export interface IImplicitTileOverride {
     geometricError?: number;
     contents?: readonly IContent[];
     metadata?: IMetadataEntity;
+    /** Heights of the terrain of the tile when they are known before its content, prepared by its parent for example. */
+    heightRange?: readonly [number, number];
 }
 
 export interface IImplicitTileAddressContext {
@@ -143,6 +145,8 @@ export interface IRuntimeImplicitTile {
     subtree: IRuntimeImplicitSubtree;
     childrenMaterialized: boolean;
     metadataApplied: boolean;
+    /** Heights given by the resolver the last time it resolved the tile. */
+    heightRange?: readonly [number, number];
 }
 
 export interface ISubtreeAvailability {

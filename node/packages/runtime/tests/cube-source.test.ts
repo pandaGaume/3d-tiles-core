@@ -166,6 +166,25 @@ describe("createCubeImplicitSource", () => {
         expect(insideBox(resolved(3), point)).toBe(true);
         expect(insideBox(cubeTileBoundingBox({ face: 4, lod: 3, x: 0, y: 0 }, MOON), point)).toBe(false);
     });
+
+    it("gives the measured heights of a tile with its volume, and none when they are unknown", () => {
+        const { tileset, resolver } = createCubeImplicitSource({
+            surface: MOON,
+            maxLOD: 5,
+            urlTemplates: "cube://{face}/{z}/{x}/{y}",
+            heightRange: (address) => (address.lod === 3 ? [-8000, 6000] : undefined),
+        });
+        const north = tileset.root.children![4]!;
+        const heightRange = (level: number): readonly [number, number] | undefined =>
+            resolver.resolve({
+                ...context(north, level, 0, 0),
+                computedBoundingVolume: { sphere: [0, 0, 0, 1] },
+                computedGeometricError: 1,
+                computedContents: [],
+            })?.heightRange;
+        expect(heightRange(3)).toEqual([-8000, 6000]);
+        expect(heightRange(2)).toBeUndefined();
+    });
 });
 
 describe("quadtree balance on the cube", () => {

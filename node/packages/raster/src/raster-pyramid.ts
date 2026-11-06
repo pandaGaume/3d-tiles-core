@@ -70,6 +70,8 @@ export interface IRasterTileRegion<TGrid extends IRasterGrid> extends ITileAreaI
  * tile asking.
  */
 export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
+    /** Whether the depth of the pyramid varies from place to place. */
+    private readonly sparse: boolean;
     /** Deepest level loaded from the source; deeper levels down to `maxLOD` are generated. */
     public readonly sourceMaxLOD: number;
     private readonly tiles: TilePyramid<IRasterGrid<TGrid["data"]>>;
@@ -83,6 +85,7 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
     public constructor(options: IRasterPyramidOptions<TGrid>) {
         const { create, onStitched, generation, registration, prestitched, ...pyramid } = options;
         this.sourceMaxLOD = pyramid.maxLOD;
+        this.sparse = pyramid.servingLevel !== undefined;
         if (generation && (!Number.isInteger(generation.maxLOD) || generation.maxLOD < pyramid.maxLOD)) {
             throw new RangeError("The generated levels must reach at least the source maxLOD.");
         }
@@ -182,7 +185,7 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
      * @param face - Face of the point on the cube index, whose coordinates `x` and `y` run over that face. Defaults to 0.
      */
     public sampleAt(x: number, y: number, lod: number, channel = 0, face = 0): number {
-        const sourceLod = this.sourceLevel(lod);
+        const sourceLod = this.sparse ? this.levelAt(x, y, lod, face) : this.sourceLevel(lod);
         const count = 2 ** sourceLod;
         const column = x * count;
         const row = y * count;
@@ -197,6 +200,14 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
             }
         }
         return Number.NaN;
+    }
+
+    /** Level of the raster serving a point at a tile level, in a pyramid whose depth varies from place to place. */
+    private levelAt(x: number, y: number, lod: number, face: number): number {
+        const count = 2 ** lod;
+        const column = Math.max(0, Math.min(count - 1, Math.floor(x * count)));
+        const row = Math.max(0, Math.min(count - 1, Math.floor(y * count)));
+        return this.tiles.areaOf({ face, lod, x: column, y: row }).ancestor.lod;
     }
 
     /** Stitches a tile: tiles generated below the source hold a lattice, whatever the registration of the source. */

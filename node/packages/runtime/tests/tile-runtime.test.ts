@@ -312,6 +312,55 @@ describe("TileRuntime", () => {
         await runtime.dispose();
     });
 
+    it("grows an adaptive budget to what the view selects, and keeps a fixed one by default", async () => {
+        const evictions = async (workingSetFactor?: number): Promise<number> => {
+            const tileset: ITileset = {
+                asset: { version: "1.1" },
+                geometricError: 100,
+                root: {
+                    ...tile("root.glb", 100),
+                    refine: "REPLACE",
+                    children: [tile("a.glb"), tile("b.glb"), tile("c.glb"), tile("d.glb")],
+                },
+            };
+            const runtime = new TileRuntime({
+                id: "adaptive",
+                uri: "https://example.test/tileset.json",
+                adapter: {
+                    tilesets: tilesetLoader(tileset),
+                    spatial: new FakeSpatialMetric(),
+                    content: {
+                        load: async (context) => ({ kind: "renderable", handle: { uri: context.uri } }),
+                        attach: () => undefined,
+                        detach: () => undefined,
+                        dispose: () => undefined,
+                    },
+                } as IRuntimeAdapter<IFakeCamera, IFakeSpatial, IFakeHandle, string>,
+                maxScreenSpaceError: 10,
+                cache: {
+                    maxContentEntries: 1,
+                    unusedRetentionMilliseconds: 60_000,
+                    ...(workingSetFactor === undefined ? {} : { workingSetFactor }),
+                },
+                coarseningDelayFrames: 0,
+                preloadSiblings: false,
+            });
+            let evicted = 0;
+            runtime.events.subscribe((event) => {
+                if (event.type === "cache-eviction" && event.eviction.reason === "entry-budget") evicted++;
+            });
+            await runtime.update({ multiplier: 1 });
+            await runtime.whenIdle();
+            await runtime.update({ multiplier: 1 });
+            await runtime.whenIdle();
+            await runtime.dispose();
+            return evicted;
+        };
+        // Four selected tiles and their parent: 5 entries over a budget of 1.
+        expect(await evictions()).toBeGreaterThan(0);
+        expect(await evictions(2)).toBe(0);
+    });
+
     it("uses a ready ancestor as complete coverage while a camera rotation reveals a loading branch", async () => {
         const loads: string[] = [];
         const operations: string[] = [];
