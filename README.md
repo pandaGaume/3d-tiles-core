@@ -55,7 +55,7 @@ The Node workspace publishes `@spacexr/3d-tiles-core`, `@spacexr/tiles`, `@space
 
 The Babylon.js 9 integration lives in [3d-tiles-babylon](https://github.com/pandaGaume/3d-tiles-babylon): the `@spacexr/3d-tiles-babylon` package, which binds the runtime to Babylon cameras, the render loop and glTF content, drapes imagery on terrain and renders terrain through interchangeable engines, and the Google Photorealistic 3D Tiles and Mapzen implicit grid examples.
 
-The project evaluated Babylon Lite as an alternative renderer and retained Babylon.js with WebGPU as the reference implementation. See [Renderer evaluation and decision](docs/renderer-evaluation.md) for the measurements and navigation findings.
+The project evaluated Babylon Lite as an alternative renderer and retained Babylon.js as the reference implementation. It renders with WebGL: every shader is written in GLSL, and none is written for WebGPU. See [Renderer evaluation and decision](docs/renderer-evaluation.md) for the measurements and navigation findings.
 
 ## Architectural rule
 
