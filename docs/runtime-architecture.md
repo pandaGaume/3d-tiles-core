@@ -189,6 +189,8 @@ A REPLACE refinement shows the children of a tile only once every visible child 
 
 A refinement required only by the quadtree balance ends as soon as the finer neighbour leaves the view, and a screen-space error close to the threshold dips under it while the camera moves. `refinementHysteresisRatio` lowers the threshold a refined tile must stay above; `coarseningDelayFrames`, 20 by default, adds a delay in frames: a refined tile coarsens only once nothing has required its refinement for that many consecutive frames.
 
+A tile is **visible** when it is in the view of the camera, and **active** when the selection keeps it. A visible tile is always active. An active tile need not be visible. There are two peripheries, which complement each other: the scaled frustum, `ISpatialMetric.isInPeriphery` with `peripheryFrustumPlanes` of `IEcefCameraFrame`, and, with `preloadSiblings`, the neighbours. The neighbours of a visible tile of level `N` are the tiles of level `N` and finer that touch it, by an edge or a corner, through the topology of the quadtree balance, from the visible tiles of the previous frame. A tile without an address in a quadtree has no neighbours. The traversal stops at a tile that is not active: its whole hierarchy goes with it, and its ancestors do not depend on it. An active tile refines and merges by its screen-space error like a visible one, and stays selected when it leaves the view, so that a small move of the camera does not hide it and show it again. Outside the view, it refines only into children that stay active, and merges back otherwise. Only visibility decides what waits: a tile outside the view loads after those in view, never brings a coarser ancestor into the view while it loads, and takes no part in the quadtree balance.
+
 Leaving the view cancels the loads of the tiles that leave the working set. A cancelled load does not count against `maxLoadAttempts`, which only bounds failures, and a load cancelled before it started returns its contents to the idle state, so that they are requested again when the tile comes back. The children of a refined tile are requested together: every visible child is collected even after one is found not ready.
 
 ## Hooks and specialization
@@ -247,3 +249,15 @@ A whole body on the [cube index](celestial-tiling.md) is an explicit root, a sph
 - Implicit coordinates map directly to the address on the face: `x` and `y` grow like the tile axes, whatever the scheme of the source.
 - Subtrees with their own levels, such as the polar caps of the Moon, register at their address like the other implicit subtrees.
 - Quadtree balance follows the topology of the index: the neighbour across a face edge may be turned, and edges of two faces balance like any other.
+
+## Base selection for runtime owned geometry
+
+`selectionStrategy: "base"` uses the same visible/SSE traversal for explicit and implicit tilesets and for every rendering backend. `ADD` keeps its additive semantics. `REPLACE` prepares the first content front of every available child, including hidden siblings, before replacing its parent. Hidden siblings are prepared without recursively refining them. A known empty leaf contributes no content and does not force its ready siblings back to their parent.
+
+This strategy does not consult a second activity frustum or a ring of neighbours from the previous frame. Requests, cached content and the published selection are separate. Ready coverage ancestors stay protected while their descendants are selected. Only a complete ready coverage of the visible domain may replace a fallback.
+
+When quadtree balancing is enabled, one visible traversal is followed by a local edge queue that refines ready support neighbours before admission. A displayed tile at level N is never coarsened to admit a new neighbour: that neighbour must be ready at level N-1 or finer. An incompatible candidate is not published. If its support is still preparing, the runtime retains the previous ready cut and its resources until a compatible transaction can be admitted. Coarsening requested by SSE also waits when it would create an incompatible edge. The published terrain cut always has at most one geometric LOD of difference across an edge. Retaining a previous cut preserves its coverage; newly exposed regions still require their own ready content.
+
+The terrain source exposes geometric availability independently of the physical DEM. A deeper geometric tile may prepare its content from a sub-area of a measured ancestor or from generated heights. The DEM and imagery adapters own their availability, interpolation and cache identities; the generic runtime does not create DEM pages or request nonexistent source levels.
+
+The `active` strategy remains the default for existing integrations during migration. The Mercator example explicitly uses `base` for both CPU and GPU, while the cube example retains its existing strategy until its own adaptation and validation.

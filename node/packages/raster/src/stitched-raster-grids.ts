@@ -243,29 +243,48 @@ function fillInnerCorners<TGrid extends IRasterGrid>(entry: IStitchedEntry<TGrid
     const { width, height, channels, data } = entry;
     const pixels = entry.pixels!;
     const stride = width * channels;
-    const stitchedStride = (width + 1) * channels;
-    const float = isFloat(data);
+    if (!isFloat(data)) {
+        for (let row = 1; row < height; row++) {
+            let source = (row * width + 1) * channels;
+            let target = (row * (width + 1) + 1) * channels;
+            const end = (row + 1) * stride;
+            for (; source < end; source++, target++) {
+                data[target] = Math.round((pixels[source - stride - channels]! + pixels[source - stride]! + pixels[source - channels]! + pixels[source]!) / 4);
+            }
+        }
+        return;
+    }
     for (let row = 1; row < height; row++) {
-        for (let column = 1; column < width; column++) {
-            const southEast = (row * width + column) * channels;
-            const target = row * stitchedStride + column * channels;
-            for (let channel = 0; channel < channels; channel++) {
-                const index = southEast + channel;
-                const a = pixels[index - stride - channels]!;
-                const b = pixels[index - stride]!;
-                const c = pixels[index - channels]!;
-                const d = pixels[index]!;
-                const mean = (a + b + c + d) / 4;
-                if (float && Number.isNaN(mean)) {
-                    let sum = 0;
-                    let count = 0;
-                    for (const value of [a, b, c, d]) {
-                        if (Number.isNaN(value)) continue;
-                        sum += value;
-                        count++;
-                    }
-                    data[target + channel] = count === 0 ? Number.NaN : sum / count;
-                } else data[target + channel] = float ? mean : Math.round(mean);
+        let source = (row * width + 1) * channels;
+        let target = (row * (width + 1) + 1) * channels;
+        const end = (row + 1) * stride;
+        for (; source < end; source++, target++) {
+            const a = pixels[source - stride - channels]!;
+            const b = pixels[source - stride]!;
+            const c = pixels[source - channels]!;
+            const d = pixels[source]!;
+            const mean = (a + b + c + d) / 4;
+            if (!Number.isNaN(mean)) data[target] = mean;
+            else {
+                let sum = 0;
+                let count = 0;
+                if (!Number.isNaN(a)) {
+                    sum += a;
+                    count++;
+                }
+                if (!Number.isNaN(b)) {
+                    sum += b;
+                    count++;
+                }
+                if (!Number.isNaN(c)) {
+                    sum += c;
+                    count++;
+                }
+                if (!Number.isNaN(d)) {
+                    sum += d;
+                    count++;
+                }
+                data[target] = count === 0 ? Number.NaN : sum / count;
             }
         }
     }

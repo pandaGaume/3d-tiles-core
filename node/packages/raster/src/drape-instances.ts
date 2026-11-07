@@ -187,6 +187,26 @@ export class DrapeInstanceCut {
         return [...leaves.values()];
     }
 
+    /**
+     * Connects a runtime-selected terrain cut without adding, splitting or balancing its tiles. Geometry selection
+     * belongs to the runtime; imagery is sampled through page tables and cannot change this cut.
+     */
+    public connectTerrain(terrainCut: Iterable<ITileAddress>): IDrapeInstance[] {
+        const leaves = new Map<string, IDrapeInstance>();
+        const inner = new Set<string>();
+        for (const terrain of terrainCut) {
+            const address = { ...terrain };
+            leaves.set(key(address), createInstance(address, address, this.terrainDataLevel(address)));
+            for (let ancestor = parentTileAddress(address); ancestor; ancestor = parentTileAddress(ancestor)) {
+                const ancestorKey = key(ancestor);
+                if (inner.has(ancestorKey)) break;
+                inner.add(ancestorKey);
+            }
+        }
+        for (const leaf of leaves.values()) this.connect(leaf, leaves, inner);
+        return [...leaves.values()];
+    }
+
     /** Records the tiles the imagery cut reaches below, and forgets those whose hold elapsed. */
     private recordImagery(imageryCut: Iterable<ITileAddress>, now: number): void {
         for (const tile of imageryCut) {

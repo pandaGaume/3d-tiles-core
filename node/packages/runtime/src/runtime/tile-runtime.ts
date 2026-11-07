@@ -73,9 +73,11 @@ import type { IRuntimeInstrumentationOptions, IRuntimeStateStatistics } from "./
 import { RuntimeInstrumentation } from "./instrumentation";
 import { PriorityScheduler } from "./priority-scheduler";
 import {
+    refineQuadtreeCut,
     quadtreeBalanceRefinements,
     quadtreeImbalances,
     quadtreeTileKey,
+    quadtreeTouches,
     type IQuadtreeImbalance,
     type IQuadtreeTileLocation,
 } from "./quadtree-balance";
@@ -85,6 +87,12 @@ export interface ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHa
     id: string;
     uri: string;
     adapter: IRuntimeAdapter<TCamera, TSpatial, TContentHandle, TGlyphHandle>;
+    /**
+     * Selection policy shared by every content type and renderer. The base policy traverses visible tiles only,
+     * waits for the replacement front, and closes its ready quadtree cut before presentation. The active policy is
+     * retained for integrations not yet migrated. Defaults to active.
+     */
+    selectionStrategy?: "base" | "active";
     maxScreenSpaceError?: number;
     maxScreenSpaceErrorForDepth?: (depth: number, defaultValue: number) => number;
     /**
@@ -190,6 +198,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     public readonly instrumentation: RuntimeInstrumentation;
     public readonly metadataStore = new RuntimeMetadataStore();
 
+    private readonly selectionStrategy: "base" | "active";
     private readonly maxScreenSpaceError: number;
     private readonly maxScreenSpaceErrorForDepth: ((depth: number, defaultValue: number) => number) | undefined;
     private readonly refinementHysteresisRatio: number;
@@ -207,6 +216,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     private readonly quadtreeBalance: IQuadtreeBalanceOptions | undefined;
     /** Keys of the tiles that must refine to keep the quadtree balanced in the current frame. */
     private balanceRefinements = new Set<string>();
+    /** Visible selected quadtree tiles of the last traversal, whose neighbours stay active. */
+    private visibleTiles = new Set<string>();
     /** Tiles whose refinement waits in the current frame, because a neighbour cannot follow yet. */
     private readonly balanceHolds = new Set<string>();
     private unbalancedCount = 0;
@@ -231,6 +242,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     private readonly replacementFrontNodes = new Set<string>();
     private readonly activeThisFrame = new Set<string>();
     private selectedAtFrameStart: Array<IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>> = [];
+    private baseReplacementBlocked = false;
 
     private rootNode?: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>;
     private rootDocument?: IRuntimeTilesetDocument;
@@ -261,6 +273,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         if (!options.adapter.content && !options.adapter.presentation) {
             throw new Error("A content adapter or a tile presentation adapter is required.");
         }
+        this.selectionStrategy = options.selectionStrategy ?? "active";
+        if (this.selectionStrategy !== "base" && this.selectionStrategy !== "active") throw new RangeError("Unknown selection strategy.");
         this.maxScreenSpaceError = options.maxScreenSpaceError ?? 16;
         this.maxScreenSpaceErrorForDepth = options.maxScreenSpaceErrorForDepth;
         this.refinementHysteresisRatio = options.refinementHysteresisRatio ?? 0.1;
@@ -453,21 +467,44 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         const refiningAtFrameStart = new Set(this.refiningNodes);
         this.nextCoarseningAt = undefined;
         this.selectedAtFrameStart = [...this.nodes.values()].filter((node) => node.selected);
-        // The quadtree balance starts from the screen-space error selection of this frame and repeats the
-        // traversal until no further refinement is required, so that no frame presents an unbalanced cut.
-        // A transition that would still unbalance the cut, because the neighbours it needs are not ready, waits.
-        this.balanceRefinements = new Set();
-        this.balanceHolds.clear();
-        for (let pass = 1; ; pass++) {
-            desired.clear();
-            requested.length = 0;
+        if (this.selectionStrategy === "base") {
+            this.baseReplacementBlocked = false;
             this.replacementFrontNodes.clear();
             this.activeThisFrame.clear();
-            for (const node of this.nodes.values()) node.visible = false;
-            this.visit(root, camera, desired, requested);
-            if (pass >= MAX_BALANCE_PASSES) break;
-            if (this.extendQuadtreeBalance(desired)) continue;
-            if (!this.holdUnbalancedRefinements(desired)) break;
+            for (const node of this.nodes.values()) {
+                node.visible = false;
+                node.active = false;
+            }
+            this.visitBase(root, camera, desired, requested);
+            if (this.baseReplacementBlocked) this.retainBaseCut(camera, desired, requested);
+            this.closeBaseQuadtreeCut(camera, desired, requested);
+            this.protectBaseCoverageAncestors(desired, requested);
+            // Hysteresis and public transition metrics follow the published cut, not rejected refinement attempts.
+            this.refiningNodes.clear();
+            for (const node of desired.values()) {
+                for (let parent = node.parent; parent; parent = parent.parent) this.refiningNodes.add(parent.id);
+            }
+        } else {
+            // The quadtree balance starts from the screen-space error selection of this frame and repeats the
+            // traversal until no further refinement is required, so that no frame presents an unbalanced cut.
+            // A transition that would still unbalance the cut, because the neighbours it needs are not ready, waits.
+            this.balanceRefinements = new Set();
+            this.balanceHolds.clear();
+            for (let pass = 1; ; pass++) {
+                desired.clear();
+                requested.length = 0;
+                this.replacementFrontNodes.clear();
+                this.activeThisFrame.clear();
+                for (const node of this.nodes.values()) {
+                    node.visible = false;
+                    node.active = false;
+                }
+                this.visit(root, camera, desired, requested);
+                if (pass >= MAX_BALANCE_PASSES) break;
+                if (this.extendQuadtreeBalance(desired)) continue;
+                if (!this.holdUnbalancedRefinements(desired)) break;
+            }
+            this.updateVisibleTiles(desired);
         }
         await this.deactivatePipelineTilesOutsideWorkingSet();
 
@@ -517,14 +554,264 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         return result;
     }
 
+    /** Visible traversal shared by explicit tiles, implicit tiles and both rendering backends. */
+    private visitBase(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        camera: TCamera,
+        desired: Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>,
+        requested: IRuntimeContent<TContentHandle>[],
+    ): void {
+        if (this.hasSelectedReplacementAncestor(node, desired)) return;
+        node.visible = this.adapter.spatial.isVisible(node.spatial, camera);
+        node.active = node.visible;
+        if (!node.visible) return;
+        this.touchBaseTile(node, camera);
+        const potential = node.contents.some(
+            (content) => content.kind === TileContentKind.Unknown || content.kind === TileContentKind.Renderable,
+        );
+        if (potential) {
+            // A ready ancestor remains available while its descendants render, including under tight cache budgets.
+            this.replacementFrontNodes.add(node.id);
+            this.requestNodeContents(node, node.screenSpaceError, requested);
+        }
+        if (node.implicit && node.implicit.subtree.status !== TileReadinessState.Ready) {
+            this.requestImplicitSubtree(node, node.screenSpaceError);
+            this.selectBaseCoverage(node, camera, desired, requested);
+            return;
+        }
+        const threshold = this.maxScreenSpaceErrorForDepth?.(node.depth, this.maxScreenSpaceError) ?? this.maxScreenSpaceError;
+        const wasRefining = this.refiningNodes.has(node.id);
+        const effective = wasRefining
+            ? threshold * (1 - this.refinementHysteresisRatio)
+            : threshold * Math.max(1, this.refinementThresholdScale?.() ?? 1);
+        const required = !potential || node.screenSpaceError > effective || this.isBalanceRefinementRequired(node);
+        const delayed = this.isCoarseningDelayed(node, wasRefining, required);
+        if (required || delayed) this.materializeImplicitChildren(node);
+        const refining = (required || delayed) && node.children.length > 0;
+        this.setRefinementState(node, refining);
+        if (!refining) {
+            // A known empty leaf is an empty part of the replacement, not missing coverage.
+            if (!potential) return;
+            this.selectBaseCoverage(node, camera, desired, requested);
+            return;
+        }
+        if (node.refinementMode === TileRefinementMode.Add) {
+            if (this.isNodePresentationReady(node)) this.selectBaseTile(node, desired, requested);
+            for (const child of node.children) this.visitBase(child, camera, desired, requested);
+            return;
+        }
+        // Every available child's first content front belongs to the same replacement transaction. Hidden siblings
+        // are prepared once, without recursively refining their hierarchy by SSE or by a peripheral camera.
+        const ready = node.children
+            .map((child) => this.collectBaseReplacementFront(child, camera, requested, node.screenSpaceError))
+            .every(Boolean);
+        if (!ready) {
+            this.selectBaseCoverage(node, camera, desired, requested, true);
+            return;
+        }
+        for (const child of node.children) this.visitBase(child, camera, desired, requested);
+    }
+
+    private touchBaseTile(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>, camera: TCamera): void {
+        node.lastTouchedFrame = this.frame;
+        if (node.implicit) node.implicit.subtree.lastTouchedFrame = this.frame;
+        node.screenSpaceError = this.adapter.spatial.screenSpaceError({
+            camera,
+            spatial: node.spatial,
+            tile: node.source,
+            depth: node.depth,
+        });
+    }
+
+    private collectBaseReplacementFront(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        camera: TCamera,
+        requested: IRuntimeContent<TContentHandle>[],
+        priorityFloor: number,
+    ): boolean {
+        node.visible = this.adapter.spatial.isVisible(node.spatial, camera);
+        node.active = node.visible;
+        this.touchBaseTile(node, camera);
+        const priority = Math.max(node.screenSpaceError, priorityFloor);
+        if (node.implicit && node.implicit.subtree.status !== TileReadinessState.Ready) {
+            this.requestImplicitSubtree(node, priority);
+            return false;
+        }
+        const potential = node.contents.some(
+            (content) => content.kind === TileContentKind.Unknown || content.kind === TileContentKind.Renderable,
+        );
+        if (potential) {
+            this.replacementFrontNodes.add(node.id);
+            this.requestNodeContents(node, priority, requested);
+            return this.isNodePresentationReady(node);
+        }
+        // Empty structural nodes are not content: resolve their first available content front.
+        this.materializeImplicitChildren(node);
+        return node.children.map((child) => this.collectBaseReplacementFront(child, camera, requested, priority)).every(Boolean);
+    }
+
+    private hasSelectedReplacementAncestor(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        desired: ReadonlyMap<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>,
+    ): boolean {
+        for (let parent = node.parent; parent; parent = parent.parent) {
+            if (parent.refinementMode === TileRefinementMode.Add) return false;
+            if (desired.has(parent.id)) return true;
+        }
+        return false;
+    }
+
+    private selectBaseTile(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        desired: Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>,
+        requested: IRuntimeContent<TContentHandle>[],
+    ): void {
+        if (this.hasSelectedReplacementAncestor(node, desired)) return;
+        if (node.refinementMode === TileRefinementMode.Replace) {
+            for (const tile of desired.values()) if (this.isDescendantOf(tile, node)) desired.delete(tile.id);
+        }
+        this.selectNode(node, desired, requested);
+    }
+
+    private selectBaseCoverage(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        camera: TCamera,
+        desired: Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>,
+        requested: IRuntimeContent<TContentHandle>[],
+        retainRefinedCoverage = false,
+    ): void {
+        const ready = this.isNodePresentationReady(node);
+        if (this.stableReplacementCut && (retainRefinedCoverage || !ready) && this.selectedDescendantsCover(node, camera)) {
+            for (const child of this.selectedAtFrameStart) {
+                if (
+                    !this.isDescendantOf(child, node) ||
+                    !this.adapter.spatial.isVisible(child.spatial, camera) ||
+                    !this.isNodePresentationReady(child)
+                )
+                    continue;
+                child.visible = true;
+                child.active = true;
+                this.touchBaseTile(child, camera);
+                this.selectBaseTile(child, desired, requested);
+            }
+            return;
+        }
+        if (
+            retainRefinedCoverage &&
+            this.selectedAtFrameStart.some(
+                (child) =>
+                    this.isDescendantOf(child, node) &&
+                    this.adapter.spatial.isVisible(child.spatial, camera) &&
+                    this.isNodePresentationReady(child),
+            )
+        ) {
+            // A newly visible cold branch cannot replace already published detail through its shared ancestor.
+            this.baseReplacementBlocked = true;
+            return;
+        }
+        if (ready) {
+            this.selectBaseTile(node, desired, requested);
+            return;
+        }
+        for (let parent = node.parent; parent; parent = parent.parent) {
+            if (parent.refinementMode === TileRefinementMode.Add) break;
+            if (!this.isNodePresentationReady(parent)) continue;
+            this.selectBaseTile(parent, desired, requested);
+            return;
+        }
+        // No ready coverage exists during bootstrap. Keep requesting it without publishing an unready tile.
+    }
+
+    private closeBaseQuadtreeCut(
+        camera: TCamera,
+        desired: Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>,
+        requested: IRuntimeContent<TContentHandle>[],
+    ): void {
+        if (!this.quadtreeBalance) return;
+        const entries = [...desired.values()].flatMap((value) => {
+            const location = value.refinementMode === TileRefinementMode.Replace ? this.quadtreeLocation(value) : undefined;
+            return location ? [{ location, value }] : [];
+        });
+        // Keep the support requested by the desired detail and every ready split performed by this local closure.
+        const support = [...entries];
+        const balanced = refineQuadtreeCut(entries, (coarse) => {
+            this.materializeImplicitChildren(coarse.value);
+            if (coarse.value.children.length === 0) return undefined;
+            const ready = coarse.value.children
+                .map((child) => this.collectBaseReplacementFront(child, camera, requested, BALANCE_LOAD_PRIORITY))
+                .every(Boolean);
+            if (!ready) return undefined;
+            const front: typeof entries = [];
+            const collect = (node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): boolean => {
+                if (!node.visible) return true;
+                if (this.isNodePresentationReady(node)) {
+                    const location = node.refinementMode === TileRefinementMode.Replace ? this.quadtreeLocation(node) : undefined;
+                    if (!location) return false;
+                    front.push({ location, value: node });
+                    return true;
+                }
+                return node.children.map(collect).every(Boolean);
+            };
+            if (!coarse.value.children.map(collect).every(Boolean)) return undefined;
+            support.push(...front);
+            return front;
+        });
+        if (!balanced) {
+            // A new neighbour cannot degrade existing fine geometry. Reject this entire publication until its support is ready.
+            this.retainBaseCut(camera, desired, requested);
+            for (const node of desired.values()) {
+                const location = this.quadtreeLocation(node);
+                if (location) support.push({ location, value: node });
+            }
+        } else {
+            const kept = new Set(balanced.map(({ value }) => value));
+            for (const { value } of entries) if (!kept.has(value)) desired.delete(value.id);
+            for (const { value } of balanced) this.selectBaseTile(value, desired, requested);
+        }
+        const requirements = quadtreeBalanceRefinements(support.map(({ location }) => location));
+        if (requirements.size !== this.balanceRefinements.size || [...requirements].some((key) => !this.balanceRefinements.has(key)))
+            this.requestFrame();
+        this.balanceRefinements = requirements;
+    }
+
+    private retainBaseCut(
+        camera: TCamera,
+        desired: Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>,
+        requested: IRuntimeContent<TContentHandle>[],
+    ): void {
+        desired.clear();
+        for (const node of this.selectedAtFrameStart) {
+            if (!this.isNodePresentationReady(node)) continue;
+            node.visible = this.adapter.spatial.isVisible(node.spatial, camera);
+            node.active = node.visible;
+            this.touchBaseTile(node, camera);
+            this.selectNode(node, desired, requested);
+        }
+    }
+
+    private protectBaseCoverageAncestors(
+        desired: ReadonlyMap<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>,
+        requested: IRuntimeContent<TContentHandle>[],
+    ): void {
+        const seen = new Set<string>();
+        for (const tile of desired.values()) {
+            for (let parent = tile.parent; parent && !seen.has(parent.id); parent = parent.parent) {
+                seen.add(parent.id);
+                this.replacementFrontNodes.add(parent.id);
+                parent.lastTouchedFrame = this.frame;
+                if (parent.implicit) parent.implicit.subtree.lastTouchedFrame = this.frame;
+                this.requestNodeContents(parent, this.loadPriority(parent), requested);
+            }
+        }
+    }
+
     protected visit(
         node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
         camera: TCamera,
         desired: Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>,
         requested: IRuntimeContent<TContentHandle>[],
     ): void {
-        node.visible = this.adapter.spatial.isVisible(node.spatial, camera);
-        if (!node.visible) return;
+        if (!this.updateActivity(node, camera)) return;
         node.lastTouchedFrame = this.frame;
         if (node.implicit) node.implicit.subtree.lastTouchedFrame = this.frame;
         node.screenSpaceError = this.adapter.spatial.screenSpaceError({
@@ -553,7 +840,11 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         const coarseningDelayed = this.isCoarseningDelayed(node, wasRefining, required);
         const refinementRequested = !held && (required || coarseningDelayed);
         if (refinementRequested) this.materializeImplicitChildren(node);
-        const wantsRefinement = refinementRequested && node.children.length > 0;
+        // Outside the view, a tile refines only into children that stay active, and merges back otherwise.
+        const wantsRefinement =
+            refinementRequested &&
+            node.children.length > 0 &&
+            (node.visible || node.children.map((child) => this.updateActivity(child, camera)).some(Boolean));
         this.setRefinementState(node, wantsRefinement);
 
         if (!wantsRefinement) {
@@ -562,8 +853,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             // renderable, otherwise zooming out exposes the clear colour for
             // one or more load cycles. Correctness must not depend on cache.
             if (hasPotentialPresentation && !this.isNodePresentationReady(node)) {
-                this.requestNodeContents(node, node.screenSpaceError, requested);
+                this.requestNodeContents(node, this.loadPriority(node), requested);
                 if (this.stableReplacementCut && this.retainVisibleSelectedDescendants(node, camera, desired)) return;
+                // Only what the camera sees may bring a coarser tile into the view.
+                if (!node.visible) return;
                 if (this.selectReadyCoverageAncestor(node.parent, desired, requested)) return;
             }
             this.selectNode(node, desired, requested);
@@ -611,9 +904,9 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         requested: IRuntimeContent<TContentHandle>[],
         priorityFloor = 0,
     ): boolean {
-        node.visible = this.adapter.spatial.isVisible(node.spatial, camera);
+        this.updateActivity(node, camera);
         if (!node.visible) {
-            if (this.preloadSiblings) this.preloadSibling(node, camera, requested);
+            if (this.preloadSiblings || node.active) this.preloadSibling(node, camera, requested);
             return true;
         }
         node.lastTouchedFrame = this.frame;
@@ -735,6 +1028,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         if (!this.quadtreeBalance) return false;
         const locations: IQuadtreeTileLocation[] = [];
         for (const node of desired.values()) {
+            // A tile outside the view, even active, neither requires nor holds back what the camera sees.
+            if (!node.visible) continue;
             const location = this.quadtreeLocation(node);
             if (location) locations.push(location);
         }
@@ -747,12 +1042,13 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         return added;
     }
 
-    /** Selected quadtree tiles next to a selected tile two or more levels coarser. */
+    /** Visible selected quadtree tiles next to a visible selected tile two or more levels coarser. */
     private findImbalances(
         desired: ReadonlyMap<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>,
     ): IQuadtreeImbalance<IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>[] {
         const displayed: Array<{ location: IQuadtreeTileLocation; value: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle> }> = [];
         for (const node of desired.values()) {
+            if (!node.visible) continue;
             const location = this.quadtreeLocation(node);
             if (location) displayed.push({ location, value: node });
         }
@@ -830,11 +1126,62 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         return false;
     }
 
+    /**
+     * Updates whether a tile is visible and active. A visible tile is always active. An active tile need not be visible: it
+     * may lie in the periphery of the view or, with `preloadSiblings`, be the neighbour of a visible tile. It refines and
+     * merges like a visible one, and stays selected when it leaves the view, so that the selection does not change with
+     * each small move of the camera. The traversal stops at a tile that is not active: its whole hierarchy goes with it,
+     * and its ancestors do not depend on it.
+     *
+     * @returns Whether the tile is active.
+     */
+    private updateActivity(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>, camera: TCamera): boolean {
+        const { spatial } = this.adapter;
+        node.visible = spatial.isVisible(node.spatial, camera);
+        node.active =
+            node.visible ||
+            spatial.isInPeriphery?.(node.spatial, camera) === true ||
+            (this.preloadSiblings && this.isNeighbourOfVisible(node));
+        return node.active;
+    }
+
+    private isNeighbourOfVisible(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): boolean {
+        const location = this.quadtreeLocation(node);
+        return location !== undefined && quadtreeTouches(location, this.visibleTiles);
+    }
+
+    /** Keeps the visible selected tiles of a frame, for their neighbours in the next one. It asks for that frame when they changed. */
+    private updateVisibleTiles(desired: ReadonlyMap<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>): void {
+        const tiles = new Set<string>();
+        for (const node of desired.values()) {
+            if (!node.visible) continue;
+            const location = this.quadtreeLocation(node);
+            if (location) tiles.add(quadtreeTileKey(location.namespace, location.address));
+        }
+        const changed = tiles.size !== this.visibleTiles.size || [...tiles].some((tile) => !this.visibleTiles.has(tile));
+        this.visibleTiles = tiles;
+        if (changed) this.requestFrame();
+    }
+
+    /** What the camera sees loads first. */
+    private loadPriority(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): number {
+        return node.visible ? node.screenSpaceError : node.screenSpaceError * PRELOAD_PRIORITY_SCALE;
+    }
+
     /** Whether the tiles selected at the start of the frame cover every visible part of a tile. */
     private selectedDescendantsCover(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>, camera: TCamera): boolean {
         const selected = new Set(this.selectedAtFrameStart);
         const covered = (tile: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): boolean => {
             if (selected.has(tile) || !this.adapter.spatial.isVisible(tile.spatial, camera)) return true;
+            if (
+                this.selectionStrategy === "base" &&
+                tile.children.length === 0 &&
+                tile.contents.every((content) => content.kind === TileContentKind.Empty && content.status === TileReadinessState.Ready) &&
+                (!tile.implicit || (tile.implicit.subtree.status === TileReadinessState.Ready && tile.implicit.childrenMaterialized))
+            ) {
+                // An available empty leaf intentionally contributes no geometry to the retained replacement cut.
+                return true;
+            }
             return tile.children.length > 0 && tile.children.every(covered);
         };
         return node.children.length > 0 && node.children.every(covered);
@@ -848,8 +1195,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         let retained = false;
         for (const candidate of this.selectedAtFrameStart) {
             if (!this.isDescendantOf(candidate, node)) continue;
-            candidate.visible = this.adapter.spatial.isVisible(candidate.spatial, camera);
-            if (!candidate.visible) continue;
+            if (!this.updateActivity(candidate, camera)) continue;
             candidate.lastTouchedFrame = this.frame;
             if (candidate.implicit) candidate.implicit.subtree.lastTouchedFrame = this.frame;
             candidate.screenSpaceError = this.adapter.spatial.screenSpaceError({
@@ -919,7 +1265,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         desired.set(node.id, node);
         node.lastTouchedFrame = this.frame;
         for (const content of node.contents) content.lastTouchedFrame = this.frame;
-        this.requestNodeContents(node, node.screenSpaceError, requested);
+        this.requestNodeContents(node, this.loadPriority(node), requested);
     }
 
     protected requestNodeContents(
