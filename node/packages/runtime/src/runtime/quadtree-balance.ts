@@ -123,19 +123,29 @@ export interface IQuadtreeCutTile<T> {
  * Admits a ready cut exclusively by refining incompatible coarse neighbours. Existing fine leaves never coarsen.
  * Each successful split strictly increases depth; only its front and the fine leaf return to the local queue.
  * A cold front is requested once, and makes the whole transaction inadmissible without publishing a partial cut.
+ *
+ * @param blocked - Receives, for each edge a cold front leaves two levels apart or more, the tiles of `displayed`
+ * that led to it: the coarse tile, or the one it was split from, and the fine tile with every tile split for it.
  */
 export function refineQuadtreeCut<T>(
     displayed: Iterable<IQuadtreeCutTile<T>>,
     refine: (coarse: IQuadtreeCutTile<T>) => readonly IQuadtreeCutTile<T>[] | undefined,
+    blocked?: (involved: readonly IQuadtreeCutTile<T>[]) => void,
 ): IQuadtreeCutTile<T>[] | undefined {
     const leaves = new Map<string, IQuadtreeCutTile<T>>();
     const queue: IQuadtreeCutTile<T>[] = [];
     const unavailable = new Set<string>();
+    // The tiles of the input each leaf comes from: itself, or the tiles whose splits produced it.
+    const origins = new Map<IQuadtreeCutTile<T>, readonly IQuadtreeCutTile<T>[]>();
     const keyOf = ({ location }: IQuadtreeCutTile<T>): string => quadtreeTileKey(location.namespace, location.address);
     for (const tile of displayed) {
         leaves.set(keyOf(tile), tile);
         queue.push(tile);
+        origins.set(tile, [tile]);
     }
+    const involved = (fine: IQuadtreeCutTile<T>, coarse: IQuadtreeCutTile<T>): IQuadtreeCutTile<T>[] => [
+        ...new Set([...origins.get(fine)!, ...origins.get(coarse)!]),
+    ];
     const covering = (namespace: string, address: ITileAddress): IQuadtreeCutTile<T> | undefined => {
         for (let levels = 0; levels <= address.lod; levels++) {
             const tile = leaves.get(quadtreeTileKey(namespace, levels === 0 ? address : ancestorTileAddress(address, levels)));
@@ -156,10 +166,15 @@ export function refineQuadtreeCut<T>(
                 break;
             }
         }
-        if (!coarse || unavailable.has(keyOf(coarse))) continue;
+        if (!coarse) continue;
+        if (unavailable.has(keyOf(coarse))) {
+            blocked?.(involved(fine, coarse));
+            continue;
+        }
         const front = refine(coarse);
         if (!front) {
             unavailable.add(keyOf(coarse));
+            blocked?.(involved(fine, coarse));
             continue;
         }
         const keys = new Set(front.map(keyOf));
@@ -179,9 +194,11 @@ export function refineQuadtreeCut<T>(
             }
         }
         leaves.delete(keyOf(coarse));
+        const origin = involved(fine, coarse);
         for (const child of front) {
             leaves.set(keyOf(child), child);
             queue.push(child);
+            origins.set(child, origin);
         }
         queue.push(fine);
     }

@@ -9,6 +9,7 @@ interface ICamera {
     focus?: number;
     hideEast?: boolean;
     error?: number;
+    periphery?: boolean;
 }
 
 interface ISpatial {
@@ -30,8 +31,9 @@ class Metric implements ISpatialMetric<ICamera, ISpatial> {
         return spatial.region.length > 0 ? !camera.hideEast || spatial.region[0]! < 0 : spatial.x >= 0;
     }
 
-    public isInPeriphery(): boolean {
-        throw new Error("The base traversal must not consult a second selection periphery.");
+    /** With `periphery`, the hidden eastern half is the periphery of the view. */
+    public isInPeriphery(spatial: ISpatial, camera: ICamera): boolean {
+        return camera.periphery === true && !this.isVisible(spatial, camera);
     }
 
     public screenSpaceError({ camera, spatial }: { camera: ICamera; spatial: ISpatial }): number {
@@ -333,6 +335,76 @@ describe("TileRuntime base quadtree closure", () => {
         await runtime.dispose();
     });
 
+    it("keeps the displayed tile in place of a refinement that is not displayable, and publishes the rest", async () => {
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        // The children of 2/0/1 are cold: a refinement beside it would be two levels finer.
+        const { runtime, selected, imbalances } = implicitRuntime((address) =>
+            address.lod === 3 && address.x <= 1 && (address.y === 2 || address.y === 3) ? gate : undefined,
+        );
+        const area = () => selected().reduce((sum, tile) => sum + 4 ** -tile.lod, 0);
+        try {
+            for (let frame = 0; frame < 20; frame++) {
+                await runtime.update({ focus: -0.01 });
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+            expect(selected().some((tile) => tile.lod === 4 && tile.x === 7)).toBe(true);
+            // The focus moves to the western column: the old column coarsens while the new one waits for 2/0/1.
+            for (let frame = 0; frame < 6; frame++) {
+                const result = await runtime.update({ focus: -3 });
+                expect(result.unbalanced).toEqual([]);
+                expect(imbalances()).toEqual([]);
+                expect(area()).toBe(1);
+                await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+            const names = selected().map((tile) => `${tile.lod}/${tile.x}/${tile.y}`);
+            // The old column coarsened, the new one refined wherever it is displayable, and 2/0/1 waits for its children.
+            expect(selected().some((tile) => tile.x === 2 ** tile.lod / 2 - 1 && tile.lod > 2)).toBe(false);
+            expect(names).toContain("2/0/1");
+            expect(names).toContain("3/0/1");
+            expect(names).toContain("4/0/0");
+            expect(names).toContain("4/0/15");
+            release();
+            await runtime.whenIdle();
+            expect(selected().some((tile) => tile.lod === 4 && tile.x === 0)).toBe(true);
+            expect(imbalances()).toEqual([]);
+            expect(area()).toBe(1);
+        } finally {
+            release();
+            await runtime.dispose();
+        }
+    });
+
+    it("loads the periphery without selecting it, and draws it at once when it enters the view", async () => {
+        const { runtime, selected, imbalances } = implicitRuntime();
+        try {
+            await runtime.update({ error: 1000, hideEast: true, periphery: true });
+            await runtime.whenIdle();
+            await runtime.update({ error: 1000, hideEast: true, periphery: true });
+            expect(selected().some((tile) => tile.x >= 2 ** tile.lod / 2)).toBe(false);
+            const result = await runtime.update({ error: 1000 });
+            const east = result.selected.filter((tile) => tile.implicit && tile.depth === 4 && tile.visible);
+            expect(east.length).toBe(2 ** 8);
+            expect(imbalances()).toEqual([]);
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
+    it("loads nothing hidden without a periphery", async () => {
+        const { runtime, selected } = implicitRuntime();
+        try {
+            await runtime.update({ error: 1000, hideEast: true });
+            await runtime.whenIdle();
+            await runtime.update({ error: 1000, hideEast: true });
+            const result = await runtime.update({ error: 1000 });
+            expect(result.selected.filter((tile) => tile.depth === 4).length).toBe(2 ** 7);
+            expect(selected().some((tile) => tile.x >= 2 ** tile.lod / 2 && tile.lod === 4)).toBe(false);
+        } finally {
+            await runtime.dispose();
+        }
+    });
+
     it("admits warm yaw changes in the same frame and still allows compatible SSE coarsening", async () => {
         const { runtime, selected, imbalances } = implicitRuntime();
         await runtime.update({ error: 1000 });
@@ -371,11 +443,18 @@ describe("refineQuadtreeCut admission", () => {
     it("rejects a cold transaction and terminates the fine, ready middle, cold outer neighbour chain", () => {
         const displayed = [tile(4, 7, 7), tile(2, 2, 1), tile(1, 1, 1)];
         const requests: string[] = [];
-        const result = refineQuadtreeCut(displayed, (entry) => {
-            requests.push(entry.value);
-            return entry.location.address.lod === 1 ? undefined : children(entry);
-        });
+        const involved = new Set<string>();
+        const result = refineQuadtreeCut(
+            displayed,
+            (entry) => {
+                requests.push(entry.value);
+                return entry.location.address.lod === 1 ? undefined : children(entry);
+            },
+            (tiles) => tiles.forEach((entry) => involved.add(entry.value)),
+        );
         expect(result).toBeUndefined();
+        // The split of 2/2/1 was made for 4/7/7, and its front is the one 1/1/1 refuses.
+        expect([...involved].sort()).toEqual(["1/1/1", "2/2/1", "4/7/7"]);
         expect(requests.filter((value) => value === "2/2/1")).toHaveLength(1);
         expect(requests.length).toBeLessThan(10);
         expect(displayed.map((entry) => entry.value)).toEqual(["4/7/7", "2/2/1", "1/1/1"]);

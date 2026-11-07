@@ -450,3 +450,28 @@ All paths on both engines, one run: grids of 64 cells, threshold of 10 pixels fo
 - **Activations are still cancelled at once,** 0 to 70 per path at 500 ms, and give their load slot back: the delay only concerns the request behind them.
 - **No gap in the view and none at rest** on the 24 runs, and the probe saw its 100 m on all of them. Holes in motion stay small and vary between runs: up to 150 pixels at 0 ms, none at 500 ms, up to 29 at 2 000 ms. Two runs do not separate them.
 - **Frame rates:** 83 to 120 FPS at 500 ms. `plain-zoom` gives 94 and 83 FPS, and 90 and 65 at 0 ms. The slow frame rates of T19 did not come back on the same paths, which points to a busier machine then, without proving it.
+
+### Base selection, 2026-11-07
+
+#### T24. Holes while zooming on `mont-blanc-zoom`
+
+- **First reading:** parent tiles hidden before their children are drawn. It was not that: the runtime shows entering tiles before it hides leaving ones, and no hole frame had a `present` or a `hide`.
+- **Measured:** a temporary probe of the harness, 6 s, both engines. 13 hole frames on the mesh engine, worst 10 477 pixels; 12 then 29 on the GPU engine, worst 24 152. None at rest. Every selected tile had its DEM.
+- **Cause:** at each hole frame the list of drawn tiles had not changed for 1 to 14 frames, and visible tiles were covered by no drawn tile, more of them each frame. Each of those frames called `retainBaseCut` from `closeBaseQuadtreeCut`, never from `baseReplacementBlocked`: one coarse neighbour whose children were not ready made `refineQuadtreeCut` refuse the whole new list, and the list of the frame before was drawn again for a camera that had moved.
+- **Not solved:** no fix tried.
+- **Why two levels apart:** a second run counted the pairs of tiles two levels or more apart in each list `refineQuadtreeCut` refused. Mesh: 36 refusals of 405, 109 pairs. GPU: 43 of 276, 124 pairs. Every pair was two levels apart, and in every one the coarse tile asked to refine by its own screen space error, 13 to 31.7 for a threshold of 10, with none of its four children ready. The screen space error alone never gave the jump: the neighbouring branch was ready and refined, this one had not loaded. The same coarse tile, `6/32/21`, stayed with 0 of 4 children ready across the samples of the zoom. Why its children take so long was not measured.
+- **How long the children wait:** a third run followed the children of each coarse tile a refusal waited for, through the load queue of 12 slots. 40 children on each engine became ready after 2 to 17 frames, 38 to 428 ms: 3 to 5 frames before they are even requested, their contents not yet known, then queued first or nearly at the priority of the balance, then about 4 frames of loading. That is the normal time of a load, not a stalled one, but the zoom creates a new jump before the last one is ready, so the list stays refused. Not explained: some running loads have priorities of 3e21 to 7e21.
+
+#### T25. Displayable tiles: the refusal becomes local
+
+- **Change:** a ready tile is displayable only within one level of its neighbours. When `refineQuadtreeCut` refuses an edge, only the new tiles involved, the fine one and those split for it, give their place back to what was displayed there; the rest of the list is published. The previous list is kept whole only when displayed tiles alone are involved.
+- **Measured:** `mont-blanc` and `mont-blanc-zoom`, both engines, 6 s, two runs of the zoom. The whole list was never refused again, 0 of 283 to 474 closures. `mont-blanc` has no hole. A first run of `mont-blanc/mesh` drew nothing after a shader that failed to compile, and drew at 108.9 FPS without hole when run again.
+- **Not solved:** holes while zooming, at a rate close to T24. Mesh: 6 and 13 frames, at worst 687 and 2 232 pixels, against 8 to 13 frames and 1 423 to 10 477 in T24. GPU: 19 and 23 frames, 8 754 and 6 793 pixels, against 12 to 29 frames and 6 381 to 24 152. Two runs do not separate the worst figures from the variation.
+- **Cause of what remains:** the list now changes at every frame, but places enter the view whose tile is still loading. Their ready ancestor, for example `10/530/365` for `11/1061/730`, would be two levels coarser than a displayed neighbour, so it is not displayable, and nothing was displayed there the frame before. Such a place stays empty for 1 to 9 frames.
+
+#### T26. Loading the periphery of the view
+
+- **Change:** with a periphery, `frustumMargin` of `terrain-config.json` at 0.25 of the half extent of the view, the base selection loads the tiles of the periphery and their descendants down to the threshold, without selecting them. A waiting subtree now follows the priority of the frame, like contents.
+- **Failed first:** periphery loads at the priority of the view, their screen space error. `mont-blanc-zoom`, three runs: mesh 11, 2 frames with holes, at worst 1 740 and 12 pixels; GPU 16, 24 and one more run, 7 141, 9 110 and 9 565 pixels. The tiles still missing were visible, their implicit subtree not loaded, for 8 frames or more.
+- **Kept:** every load of the periphery comes after every load of the view, priority `-1 / (1 + error)`, with no tuned value. Two runs: mesh 8 and 9 frames, at worst 417 and 558 pixels; GPU 17 and 20 frames, 4 279 and 6 008 pixels. `mont-blanc` has no hole on either engine.
+- **Not solved:** holes while zooming remain, a little smaller than in T25 at a similar rate. Two runs do not separate the difference from the variation. Not measured: the requests and the memory the periphery adds.
