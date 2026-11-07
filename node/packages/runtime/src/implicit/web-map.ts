@@ -146,7 +146,10 @@ export class WebMapTileDataSource implements ITileDataSource {
                 ...(metadata ? { metadata } : {}),
             };
         });
-        const geometricError = this.geometricErrorOverride?.(address) ?? this.metrics.groundResolution(0, address.lod);
+        // The ground size of its largest cell: the projection stretches a tile towards the poles.
+        const nearestToEquator =
+            northWest.latitude >= 0 && southEast.latitude <= 0 ? 0 : Math.min(Math.abs(northWest.latitude), Math.abs(southEast.latitude));
+        const geometricError = this.geometricErrorOverride?.(address) ?? this.metrics.groundResolution(nearestToEquator, address.lod);
         const metadata = this.tileMetadata?.(address);
         return {
             address,

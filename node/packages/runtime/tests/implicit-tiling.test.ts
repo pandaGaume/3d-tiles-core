@@ -406,7 +406,7 @@ describe("TileRuntime implicit traversal", () => {
                 unusedFrameRetention: 1000,
             },
             // Immediate coarsening and no preloading: the scenario follows each frame.
-            coarseningDelayFrames: 0,
+            coarseningDelayMilliseconds: 0,
             preloadSiblings: false,
         });
 

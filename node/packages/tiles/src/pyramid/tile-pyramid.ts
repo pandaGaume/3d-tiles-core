@@ -1,8 +1,12 @@
 import { ancestorTileAddress, tileAddressKey as key, type ITileAddress } from "../addressing/tile-address";
 import { tileNeighborAddress, type TileNeighbor } from "../addressing/tile-neighbors";
 
-/** Loads the content of one tile, or `undefined` when the pyramid has no such tile. */
-export type TileContentLoader<T> = (address: ITileAddress) => Promise<T | undefined>;
+/**
+ * Loads the content of one tile, or `undefined` when the pyramid has no such tile.
+ *
+ * @param signal - Aborts when nobody waits for the tile any more. A loader may ignore it.
+ */
+export type TileContentLoader<T> = (address: ITileAddress, signal?: AbortSignal) => Promise<T | undefined>;
 
 /** Part of an ancestor tile covered by a tile, in normalized ancestor coordinates, `west` and `north` from 0. */
 export interface ITileAreaInAncestor {
@@ -36,6 +40,11 @@ export interface ITilePyramidOptions<T> {
     servingLevel?: (address: ITileAddress) => number;
     /** Tiles kept in memory. Defaults to 256. */
     cacheEntries?: number;
+    /**
+     * Time a load nobody waits for any more goes on before it is aborted, so that a tile coming back right away, as when
+     * a zoom turns around, does not load twice. Defaults to 0: at once.
+     */
+    abortDelayMilliseconds?: number;
     /** Wraps columns around the antimeridian, for pyramids covering every longitude. Defaults to false. */
     wrapX?: boolean;
     /**
@@ -62,6 +71,15 @@ interface ITilePyramidEntry<T> {
     readonly address: ITileAddress;
     readonly loading: Promise<T | undefined>;
     content: T | undefined;
+    /** Aborts the load once nobody waits for it. */
+    readonly controller: AbortController;
+    /** Requests still waiting with a signal of their own. */
+    waiting: number;
+    /** A request without a signal, which cannot leave: the load always ends. */
+    pinned: boolean;
+    settled: boolean;
+    /** Pending abort of a load nobody waits for, which a new request cancels. */
+    abortTimer: ReturnType<typeof setTimeout> | undefined;
 }
 
 /**
@@ -110,15 +128,17 @@ export class TilePyramid<T> {
     /**
      * Loads the pyramid tile serving a tile, with its prefetched neighbours.
      *
+     * @param signal - Withdraws this request, which then rejects with its reason. A load every request has withdrawn from
+     *     is aborted and leaves the cache; a load another request still waits for goes on.
      * @returns The content and the part of it the tile covers, or `undefined` when the pyramid has no tile there.
      */
-    public async load(address: ITileAddress): Promise<ITilePyramidRegion<T> | undefined> {
+    public async load(address: ITileAddress, signal?: AbortSignal): Promise<ITilePyramidRegion<T> | undefined> {
         const area = this.areaOf(address);
         const { prefetch = [] } = this.options;
         const neighbors = (typeof prefetch === "function" ? prefetch(area.ancestor) : prefetch)
             .map((position) => tileNeighborAddress(area.ancestor, position, { wrapX: this.options.wrapX ?? false }))
             .filter((neighbor) => neighbor !== undefined);
-        const [content] = await Promise.all([this.tile(area.ancestor), ...neighbors.map((neighbor) => this.tile(neighbor).catch(() => undefined))]);
+        const [content] = await Promise.all([this.tile(area.ancestor, signal), ...neighbors.map((neighbor) => this.tile(neighbor, signal).catch(() => undefined))]);
         return content === undefined ? undefined : { ...area, address: { ...address }, content };
     }
 
@@ -147,16 +167,18 @@ export class TilePyramid<T> {
         return deleted;
     }
 
-    private tile(address: ITileAddress): Promise<T | undefined> {
+    private tile(address: ITileAddress, signal?: AbortSignal): Promise<T | undefined> {
         const tileKey = key(address);
         const cached = this.entries.get(tileKey);
         if (cached) {
             // Most recently used last.
             this.entries.delete(tileKey);
             this.entries.set(tileKey, cached);
-            return cached.loading;
+            return this.wait(cached, signal);
         }
-        const loading = this.options.load(address).then((content) => {
+        const controller = new AbortController();
+        const loading = this.options.load(address, controller.signal).then((content) => {
+            entry.settled = true;
             // A tile evicted while loading, or replaced since, is dropped.
             if (this.entries.get(tileKey) === entry) {
                 entry.content = content;
@@ -164,13 +186,63 @@ export class TilePyramid<T> {
             }
             return content;
         });
-        const entry: ITilePyramidEntry<T> = { address: { ...address }, loading, content: undefined };
+        const entry: ITilePyramidEntry<T> = { address: { ...address }, loading, content: undefined, controller, waiting: 0, pinned: false, settled: false, abortTimer: undefined };
         loading.catch(() => {
+            entry.settled = true;
             if (this.entries.get(tileKey) === entry) this.entries.delete(tileKey);
         });
         this.entries.set(tileKey, entry);
         this.evictOverflow();
-        return loading;
+        return this.wait(entry, signal);
+    }
+
+    /** Aborts a load and forgets it, unless a request came back or it ended in the meantime. */
+    private abortUnwanted(entry: ITilePyramidEntry<T>, reason: unknown): void {
+        entry.abortTimer = undefined;
+        if (entry.waiting > 0 || entry.pinned || entry.settled) return;
+        entry.controller.abort(reason);
+        if (this.entries.get(key(entry.address)) === entry) this.delete(entry.address);
+    }
+
+    /** Waits for a load until the signal withdraws this request: the last one to leave aborts the load. */
+    private wait(entry: ITilePyramidEntry<T>, signal?: AbortSignal): Promise<T | undefined> {
+        if (entry.settled) return entry.loading;
+        clearTimeout(entry.abortTimer);
+        entry.abortTimer = undefined;
+        if (!signal) {
+            entry.pinned = true;
+            return entry.loading;
+        }
+        entry.waiting++;
+        return new Promise((resolve, reject) => {
+            const withdraw = (): void => {
+                entry.waiting--;
+                reject(signal.reason ?? new DOMException("The operation was aborted.", "AbortError"));
+                if (entry.waiting > 0 || entry.pinned || entry.settled) return;
+                const delay = this.options.abortDelayMilliseconds ?? 0;
+                if (delay > 0) entry.abortTimer = setTimeout(() => this.abortUnwanted(entry, signal.reason), delay);
+                else this.abortUnwanted(entry, signal.reason);
+            };
+            if (signal.aborted) {
+                withdraw();
+                return;
+            }
+            signal.addEventListener("abort", withdraw, { once: true });
+            const leave = (): void => {
+                signal.removeEventListener("abort", withdraw);
+                entry.waiting--;
+            };
+            entry.loading.then(
+                (content) => {
+                    leave();
+                    resolve(content);
+                },
+                (error: unknown) => {
+                    leave();
+                    reject(error);
+                }
+            );
+        });
     }
 
     /** Evicts the least recently used tiles that are not retained while the cache exceeds its capacity. */

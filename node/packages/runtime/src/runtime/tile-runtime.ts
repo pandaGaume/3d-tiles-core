@@ -44,6 +44,7 @@ import type {
     IRuntimeUriResolver,
 } from "../ports";
 import { StandardUriResolver } from "../ports";
+import type { RuntimeMetricName } from "../ports/telemetry";
 import type { VerticalScale } from "../spatial/vertical-scale";
 import type {
     IResolvedRuntimeCacheOptions,
@@ -93,14 +94,19 @@ export interface ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHa
      */
     refinementHysteresisRatio?: number;
     /**
-     * Frames a refined tile stays refined after nothing requires its refinement
-     * any more, neither its screen-space error nor the quadtree balance. A
-     * refinement then survives a neighbour leaving the view for a moment, or a
-     * screen-space error dipping under the threshold while the camera turns,
-     * instead of coarsening and refining again a few frames later. Defaults to
-     * 20; 0 coarsens at once.
+     * Factor on the threshold above which a tile not yet refined refines, read at each frame, at least 1. A renderer can
+     * raise it while its camera moves fast: tiles already refined still coarsen against the threshold itself, and a
+     * refinement required by the quadtree balance always happens, so that it only holds back new detail. When the factor
+     * drops while the camera is still, call {@link TileRuntime.requestFrame}. Defaults to 1.
      */
-    coarseningDelayFrames?: number;
+    refinementThresholdScale?: () => number;
+    /**
+     * Time a refined tile stays refined once nothing requires its refinement any more, neither its screen-space error
+     * nor the quadtree balance, without interruption. A refinement then survives a neighbour leaving the view for a
+     * moment, or a screen-space error dipping under the threshold while the camera turns. When it expires,
+     * {@link TileRuntime.hasPendingWork} asks for a frame, even with a still camera. Defaults to 300; 0 coarsens at once.
+     */
+    coarseningDelayMilliseconds?: number;
     /**
      * Keeps already selected descendants while their coarser replacement is
      * loading, or as a last-resort fallback when no ready renderable ancestor
@@ -187,11 +193,17 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     private readonly maxScreenSpaceError: number;
     private readonly maxScreenSpaceErrorForDepth: ((depth: number, defaultValue: number) => number) | undefined;
     private readonly refinementHysteresisRatio: number;
+    private readonly refinementThresholdScale: (() => number) | undefined;
     private readonly stableReplacementCut: boolean;
     private readonly preloadSiblings: boolean;
-    private readonly coarseningDelayFrames: number;
-    /** Frame since which each refined tile no longer requires its refinement. */
-    private readonly coarseningSince = new Map<string, number>();
+    private readonly coarseningDelayMilliseconds: number;
+    /** Since when each refined tile has no longer required its refinement, and the last frame that saw it so. */
+    private readonly coarseningSince = new Map<string, { since: number; frame: number }>();
+    /** When the first delayed coarsening of the last frame expires. */
+    private nextCoarseningAt: number | undefined;
+    /** Priority asked in the current frame for each queued load, whose passes may ask several. */
+    private readonly queuedPriorities = new Map<string, number>();
+    private queuedPrioritiesFrame = -1;
     private readonly quadtreeBalance: IQuadtreeBalanceOptions | undefined;
     /** Keys of the tiles that must refine to keep the quadtree balanced in the current frame. */
     private balanceRefinements = new Set<string>();
@@ -255,9 +267,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         if (!Number.isFinite(this.refinementHysteresisRatio) || this.refinementHysteresisRatio < 0 || this.refinementHysteresisRatio >= 1) {
             throw new RangeError("refinementHysteresisRatio must be in the interval [0, 1).");
         }
+        this.refinementThresholdScale = options.refinementThresholdScale;
         this.stableReplacementCut = options.stableReplacementCut ?? true;
         this.preloadSiblings = options.preloadSiblings ?? true;
-        this.coarseningDelayFrames = Math.max(0, Math.trunc(options.coarseningDelayFrames ?? 20));
+        this.coarseningDelayMilliseconds = Math.max(0, options.coarseningDelayMilliseconds ?? 300);
         this.clock = options.clock ?? (() => performance.now());
         this.frameTimes.set(0, this.clock());
         this.quadtreeBalance = options.quadtreeBalance
@@ -299,7 +312,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         // frames while they are unresolved only ages the cache and repeats the
         // same cut. Their settlement calls markDirty(), which requests exactly
         // one new frame.
-        return this.refreshNeeded || this.cameraDirty;
+        return this.refreshNeeded || this.cameraDirty || (this.nextCoarseningAt !== undefined && this.clock() >= this.nextCoarseningAt);
     }
 
     public get selectedTiles(): readonly IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>[] {
@@ -357,6 +370,11 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             () => undefined,
         );
         return operation;
+    }
+
+    /** Asks for one more frame with the latest camera, when something the selection reads has changed. */
+    public requestFrame(): void {
+        this.markDirty();
     }
 
     /** Stores the latest immutable camera frame without starting a traversal. */
@@ -432,6 +450,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
 
         const desired = new Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>();
         const requested: IRuntimeContent<TContentHandle>[] = [];
+        const refiningAtFrameStart = new Set(this.refiningNodes);
+        this.nextCoarseningAt = undefined;
         this.selectedAtFrameStart = [...this.nodes.values()].filter((node) => node.selected);
         // The quadtree balance starts from the screen-space error selection of this frame and repeats the
         // traversal until no further refinement is required, so that no frame presents an unbalanced cut.
@@ -459,6 +479,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             .filter((node) => node.selected && !desired.has(node.id))
             .sort((left, right) => right.depth - left.depth);
         for (const node of leaving) await this.deactivateNode(node);
+        this.recordCutChanges(refiningAtFrameStart, entering.length, leaving.length);
         await this.sweepCache();
 
         const unbalanced = this.quadtreeBalance
@@ -522,11 +543,15 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             (content) => content.kind === TileContentKind.Unknown || content.kind === TileContentKind.Renderable,
         );
         const wasRefining = this.refiningNodes.has(node.id);
-        const effectiveThreshold = wasRefining ? threshold * (1 - this.refinementHysteresisRatio) : threshold;
+        const effectiveThreshold = wasRefining
+            ? threshold * (1 - this.refinementHysteresisRatio)
+            : threshold * Math.max(1, this.refinementThresholdScale?.() ?? 1);
         const balanceRequested = this.isBalanceRefinementRequired(node);
         const held = hasPotentialPresentation && this.balanceHolds.has(node.id);
         const required = node.screenSpaceError > effectiveThreshold || !hasPotentialPresentation || balanceRequested;
-        const refinementRequested = !held && (required || this.isCoarseningDelayed(node, wasRefining, required));
+        // Always evaluated: a required refinement also starts the delay again.
+        const coarseningDelayed = this.isCoarseningDelayed(node, wasRefining, required);
+        const refinementRequested = !held && (required || coarseningDelayed);
         if (refinementRequested) this.materializeImplicitChildren(node);
         const wantsRefinement = refinementRequested && node.children.length > 0;
         this.setRefinementState(node, wantsRefinement);
@@ -604,7 +629,6 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             this.requestImplicitSubtree(node, priority);
             return false;
         }
-        this.materializeImplicitChildren(node);
         const potential = node.contents.filter(
             (content) => content.kind === TileContentKind.Unknown || content.kind === TileContentKind.Renderable,
         );
@@ -614,6 +638,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             this.requestNodeContents(node, priority, requested);
             return potential.every((content) => content.kind === TileContentKind.Renderable && content.status === TileReadinessState.Ready);
         }
+        // Only a tile without content needs its children for the front: others would create a level nothing asked for.
+        this.materializeImplicitChildren(node);
         if (node.children.length === 0) return true;
         return node.children.map((child) => this.collectReplacementFront(child, camera, requested, priorityFloor)).every(Boolean);
     }
@@ -654,15 +680,22 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         wasRefining: boolean,
         required: boolean,
     ): boolean {
-        if (required || !wasRefining || this.coarseningDelayFrames === 0) {
+        if (required || !wasRefining || this.coarseningDelayMilliseconds === 0) {
             this.coarseningSince.delete(node.id);
             return false;
         }
-        const since = this.coarseningSince.get(node.id) ?? this.frame;
-        this.coarseningSince.set(node.id, since);
-        if (this.frame - since < this.coarseningDelayFrames) return true;
-        this.coarseningSince.delete(node.id);
-        return false;
+        const now = this.clock();
+        const known = this.coarseningSince.get(node.id);
+        // A tile the last frames did not see, for example outside the view, starts again.
+        const since = known && known.frame >= this.frame - 1 ? known.since : now;
+        const expires = since + this.coarseningDelayMilliseconds;
+        if (now >= expires) {
+            this.coarseningSince.delete(node.id);
+            return false;
+        }
+        this.coarseningSince.set(node.id, { since, frame: this.frame });
+        this.nextCoarseningAt = Math.min(this.nextCoarseningAt ?? expires, expires);
+        return true;
     }
 
     /** Location of an implicit quadtree tile for balancing, or `undefined` when balancing does not apply. */
@@ -849,8 +882,9 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         if (wasRefining === refining) return;
         if (refining) this.refiningNodes.add(node.id);
         else this.refiningNodes.delete(node.id);
+        // An attempt of one pass: the balance repeats its traversal, and a frame may undo it. See `recordCutChanges`.
         this.recordMetric({
-            name: refining ? "tile.refine" : "tile.coarsen",
+            name: refining ? "tile.refine.attempt" : "tile.coarsen.attempt",
             value: 1,
             unit: "count",
             tags: {
@@ -860,6 +894,21 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
                 screenSpaceError: node.screenSpaceError,
             },
         });
+    }
+
+    /** What a frame really changed: refinements and coarsenings once its passes are over, and tiles of the cut. */
+    private recordCutChanges(refiningAtFrameStart: ReadonlySet<string>, entered: number, left: number): void {
+        const record = (name: RuntimeMetricName, value: number): void => {
+            for (let i = 0; i < value; i++) this.recordMetric({ name, value: 1, unit: "count", tags: { runtime: this.id } });
+        };
+        let refined = 0;
+        for (const id of this.refiningNodes) if (!refiningAtFrameStart.has(id)) refined++;
+        let coarsened = 0;
+        for (const id of refiningAtFrameStart) if (!this.refiningNodes.has(id)) coarsened++;
+        record("tile.refine", refined);
+        record("tile.coarsen", coarsened);
+        record("cut.entered", entered);
+        record("cut.left", left);
     }
 
     protected selectNode(
@@ -888,12 +937,15 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         }
 
         if (this.adapter.activation) {
+            if (node.contents.some((content) => content.status === TileReadinessState.Queued))
+                this.followQueuedPriority(this.pipelineActivationKey(node), priority);
             this.requestPipelineActivation(node, priority, requested, entering);
             return;
         }
 
         for (const content of node.contents) {
             if (content.kind !== TileContentKind.Unknown && content.kind !== TileContentKind.Renderable) continue;
+            if (content.status === TileReadinessState.Queued) this.followQueuedPriority(content.id, priority);
             if (
                 content.status !== TileReadinessState.Idle &&
                 content.status !== TileReadinessState.Failed &&
@@ -909,6 +961,17 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             }
         }
         this.refreshNodeReadiness(node);
+    }
+
+    /** A waiting load follows the priority of the current frame, up or down: the highest its balance passes asked. */
+    private followQueuedPriority(key: string, priority: number): void {
+        if (this.queuedPrioritiesFrame !== this.frame) {
+            this.queuedPriorities.clear();
+            this.queuedPrioritiesFrame = this.frame;
+        }
+        const highest = Math.max(this.queuedPriorities.get(key) ?? priority, priority);
+        this.queuedPriorities.set(key, highest);
+        this.scheduler.reprioritize(key, highest);
     }
 
     private requestPipelineActivation(
@@ -977,7 +1040,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             signal,
             ready: async (contentId, result) => {
                 const content = findPending(contentId);
-                if (!content || signal.aborted || node.activationId !== activationId) return false;
+                if (!content || !unsettled.has(contentId) || signal.aborted || node.activationId !== activationId) return false;
                 await this.acceptContentResult(node, content, result);
                 content.status = TileReadinessState.Ready;
                 content.readyFrame = this.frame;
@@ -991,7 +1054,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             },
             failed: async (contentId, error) => {
                 const content = findPending(contentId);
-                if (!content || node.activationId !== activationId) return;
+                if (!content || !unsettled.has(contentId) || node.activationId !== activationId) return;
                 content.error = error;
                 content.status = TileReadinessState.Failed;
                 this.events.emit({ type: "content-state", tile: node, content });
@@ -1002,10 +1065,12 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             },
             cancelled: async (contentId) => {
                 const content = findPending(contentId);
-                if (!content) return;
+                // Once settled, its contents may belong to a newer activation.
+                if (!content || !unsettled.has(contentId)) return;
                 // A cancelled attempt did not fail: it does not count against maxLoadAttempts.
                 content.attempts = Math.max(0, content.attempts - 1);
                 content.status = TileReadinessState.Cancelled;
+                this.recordMetric({ name: "content.cancelled", value: 1, unit: "count", tags: { runtime: this.id, tile: node.id } });
                 this.events.emit({ type: "content-state", tile: node, content });
                 this.refreshNodeReadiness(node);
                 finish(contentId);
@@ -1013,25 +1078,37 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             },
         };
 
+        // A cancelled activation gives its load slot back at once, whatever the adapter still waits for: a shared
+        // load may outlive it. What it reports later is ignored.
+        let abandon: () => void = () => undefined;
+        const abandoned = new Promise<void>((resolve) => {
+            abandon = resolve;
+        });
         const abort = (): void => {
             for (const contentId of [...unsettled]) void readiness.cancelled(contentId);
+            abandon();
         };
         signal.addEventListener("abort", abort, { once: true });
         try {
-            await activation.activate({
-                runtimeId: this.id,
-                tile: node,
-                pendingContents: pending,
-                priority,
-                activationId,
-                signal,
-                readiness,
-            });
+            await Promise.race([
+                activation.activate({
+                    runtimeId: this.id,
+                    tile: node,
+                    pendingContents: pending,
+                    priority,
+                    activationId,
+                    signal,
+                    readiness,
+                }),
+                abandoned,
+            ]);
             if (unsettled.size > 0) await settled;
         } catch (error) {
             for (const contentId of [...unsettled]) await readiness.failed(contentId, error);
         } finally {
             signal.removeEventListener("abort", abort);
+            // Its tile may have come back in the meantime, and been refused while this activation held its key.
+            if (signal.aborted) this.markDirty();
         }
     }
 

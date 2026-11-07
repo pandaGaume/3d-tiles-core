@@ -51,7 +51,7 @@ function createRuntime(activate: Activate, maxConcurrentLoads: number) {
         maxScreenSpaceError: 1,
         maxConcurrentLoads,
         preloadSiblings: false,
-        coarseningDelayFrames: 0,
+        coarseningDelayMilliseconds: 0,
     });
 }
 

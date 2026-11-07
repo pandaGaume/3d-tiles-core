@@ -97,9 +97,9 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
         this.tiles = new TilePyramid({
             ...pyramid,
             maxLOD: generation?.maxLOD ?? pyramid.maxLOD,
-            load: (address) => {
-                if (registration === "area") return address.lod <= this.sourceMaxLOD ? pyramid.load(address) : this.generate(address, interpolation);
-                return this.loadWithEdges(address, pyramid.load);
+            load: (address, signal) => {
+                if (registration === "area") return address.lod <= this.sourceMaxLOD ? pyramid.load(address, signal) : this.generate(address, interpolation, signal);
+                return this.loadWithEdges(address, pyramid.load, signal);
             },
             // Pixels need the eight tiles around them; generated tiles hold a lattice, completed from the east and south.
             prefetch: registration === "point" ? [] : (address) => (address.lod <= this.sourceMaxLOD ? ALL_NEIGHBORS : LATTICE_NEIGHBORS),
@@ -155,11 +155,12 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
     /**
      * Loads the raster serving a tile, with the neighbours that complete it.
      *
+     * @param signal - Withdraws this request; see `TilePyramid.load`.
      * @returns The stitched grid and the part of it the tile covers, or `undefined` when the pyramid has no raster
      *     there.
      */
-    public async load(address: ITileAddress): Promise<IRasterTileRegion<TGrid> | undefined> {
-        const region = await this.tiles.load(address);
+    public async load(address: ITileAddress, signal?: AbortSignal): Promise<IRasterTileRegion<TGrid> | undefined> {
+        const region = await this.tiles.load(address, signal);
         if (!region) return undefined;
         const { ancestor, west, north, size } = region;
         // Evicted again while its neighbours loaded: stitch it once more.
@@ -223,18 +224,19 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
     /** Loads a tile that holds its shared edges, or interpolates its parent where the source has none. */
     private async loadWithEdges(
         address: ITileAddress,
-        load: (address: ITileAddress) => Promise<IRasterGrid<TGrid["data"]> | undefined>
+        load: (address: ITileAddress, signal?: AbortSignal) => Promise<IRasterGrid<TGrid["data"]> | undefined>,
+        signal?: AbortSignal
     ): Promise<IRasterGrid<TGrid["data"]> | undefined> {
-        const own = address.lod <= this.sourceMaxLOD ? await load(address) : undefined;
+        const own = address.lod <= this.sourceMaxLOD ? await load(address, signal) : undefined;
         if (own) return own;
         const parent = parentTileAddress(address);
         if (!parent) return undefined;
-        const region = await this.tiles.load(parent);
+        const region = await this.tiles.load(parent, signal);
         return region && generatePointChildRaster(region.content, address.x - parent.x * 2, address.y - parent.y * 2);
     }
 
     /** Generates a tile below the source levels from its parent and the neighbours of its parent. */
-    private async generate(address: ITileAddress, interpolation: RasterInterpolation): Promise<IRasterGrid<TGrid["data"]> | undefined> {
+    private async generate(address: ITileAddress, interpolation: RasterInterpolation, signal?: AbortSignal): Promise<IRasterGrid<TGrid["data"]> | undefined> {
         const parent = parentTileAddress(address)!;
         const positions = [TileNeighbor.NW, TileNeighbor.N, TileNeighbor.NE, TileNeighbor.W, TileNeighbor.C, TileNeighbor.E, TileNeighbor.SW, TileNeighbor.S, TileNeighbor.SE];
         const neighborhood = await Promise.all(
@@ -242,7 +244,7 @@ export class RasterPyramid<TGrid extends IRasterGrid = IRasterGrid> {
                 const neighbor = position === TileNeighbor.C ? parent : tileNeighborAddress(parent, position, { wrapX: this.wrapX });
                 if (!neighbor) return undefined;
                 // Only the parent is required; a missing neighbour repeats the edges of the parent.
-                const region = await this.tiles.load(neighbor).catch((error: unknown) => {
+                const region = await this.tiles.load(neighbor, signal).catch((error: unknown) => {
                     if (position === TileNeighbor.C) throw error;
                     return undefined;
                 });

@@ -100,15 +100,15 @@ describe("cube DEM tiles", () => {
         // Below the subtree of face 5, interpolated from its deepest declared level.
         const deep = await pyramid.tileHeights({ face: CubeFace.South, lod: 5, x: 3, y: 4 });
         expect(deep?.sampler(0.5, 0.5)).toBe(40);
-        expect(fetchTile).toHaveBeenCalledWith("https://tiles.example.com/5/3/0/1.png", undefined);
-        expect(fetchTile).not.toHaveBeenCalledWith("https://tiles.example.com/5/4/1/2.png", undefined);
+        expect(fetchTile).toHaveBeenCalledWith("https://tiles.example.com/5/3/0/1.png", expect.any(AbortSignal));
+        expect(fetchTile).not.toHaveBeenCalledWith("https://tiles.example.com/5/4/1/2.png", expect.any(AbortSignal));
 
         // Face 1 only declares levels 0 and 1.
         fetchTile.mockClear();
         const sparse = await pyramid.tileHeights({ face: CubeFace.PositiveY, lod: 3, x: 2, y: 2 });
         expect(sparse?.sampler(0, 0)).toBe(40);
         expect(fetchTile).toHaveBeenCalledTimes(1);
-        expect(fetchTile).toHaveBeenCalledWith("https://tiles.example.com/1/1/0/0.png", undefined);
+        expect(fetchTile).toHaveBeenCalledWith("https://tiles.example.com/1/1/0/0.png", expect.any(AbortSignal));
     });
 
     it("read heights on the face of the point, the stitched samples at their place", async () => {
