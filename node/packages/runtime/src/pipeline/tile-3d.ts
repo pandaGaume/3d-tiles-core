@@ -85,7 +85,10 @@ export class Tile3D<TSpatial, TRenderHandle = unknown, TGlyphHandle = unknown> {
     /** Heights measured on the content, kept with its bounding volume. */
     public contentHeights: (() => readonly [number, number]) | undefined = undefined;
     public readonly contents: Array<Tile3DContent<TRenderHandle>>;
+    /** In the view of the camera. A visible tile is always active. */
     public visible = false;
+    /** Kept by the selection: visible, in the periphery of the view, or a neighbour of a visible tile. */
+    public active = false;
     public screenSpaceError = 0;
     public priority = 0;
     public activationId = 0;

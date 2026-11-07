@@ -54,7 +54,8 @@ export function createHeightGrid(width: number, height: number, data: Float32Arr
     let minimum = Number.POSITIVE_INFINITY;
     let maximum = Number.NEGATIVE_INFINITY;
     let noDataCount = 0;
-    for (const value of data) {
+    for (let index = 0; index < data.length; index++) {
+        const value = data[index]!;
         if (Number.isNaN(value)) {
             noDataCount++;
             continue;

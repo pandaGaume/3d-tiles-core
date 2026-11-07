@@ -2,12 +2,17 @@ import { RasterPyramid, type IRasterPyramidOptions } from "@spacexr/raster";
 import type { CelestialTileSource, ITileAddress, TileContentLoader } from "@spacexr/tiles";
 
 import { createHeightGrid, type DemEncoding, type IDemDecoder, type IHeightGrid, type IHeightRange, type QuadrantHeightRanges } from "../codecs";
-import { loadDemTile, type IDemTileSource } from "../sources";
+import type { IDemTileSource } from "../sources";
 import type { ChildHeightRanges } from "./child-height-ranges";
 
 /** Loader fetching and decoding the tiles of a web DEM source. */
 export function webDemTileLoader(source: IDemTileSource, decoder: IDemDecoder): TileContentLoader<IHeightGrid> {
-    return async (address, signal) => (await loadDemTile(source, address, decoder, signal ? { signal } : {}))?.content;
+    return async (address, signal) => {
+        const result = await source.source.fetchTile(address, signal);
+        if (result.status === "absent") return undefined;
+        // The pyramid needs heights and their range, not the extra statistics of a standalone DemInfos tile.
+        return decoder.decodeDem(result.bytes, source.encoding, signal ? { signal } : {});
+    };
 }
 
 /**
