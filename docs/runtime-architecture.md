@@ -181,7 +181,7 @@ A jump of two levels can only remain while the neighbour's children load, either
 
 Diagonal neighbours do not constrain a tile, because tile corners exist at every level. Neighbours follow the `TileNeighbor` layout of `@spacexr/tiles`. When the implicit resolver implements `addressOf`, as `ImplicitTilesetDecorator` does, tiles are located in the pyramid shared by several implicit tilesets and balanced across their roots; `wrapX` also connects the antimeridian of a global pyramid. Otherwise each implicit tileset is balanced on its own coordinates. Explicit tilesets have no neighbour definition and are not balanced.
 
-With the `fillGaps` option, which the cube index uses, a tile that the balance must refine, and whose children are not ready, keeps its displayed descendants only when they cover every visible part of it. Otherwise it falls back to a ready tile like any other refinement: an edge waiting for its balance, reported in `unbalanced`, is better than an empty part of the view.
+With the `fillGaps` option, a tile that the balance must refine, and whose children are not ready, keeps its displayed descendants only when they cover every visible part of it. Otherwise it falls back to a ready tile like any other refinement: an edge waiting for its balance, reported in `unbalanced`, is better than an empty part of the view.
 
 ### Turning the camera
 
@@ -242,13 +242,7 @@ The generic runtime owns traversal, availability and resource lifecycle. Web til
 
 ## Cube tilesets
 
-A whole body on the [cube index](celestial-tiling.md) is an explicit root, a sphere around the body, whose children are the implicit quadtrees of the six faces, or `4^minLOD` per face.
-
-- Tiles carry oriented `box` bounding volumes, since a `region` cannot describe a polar face. The box follows the measured height range of the tile once known. Culling, picking and screen-space error use this box, and the index footprint of a tile is only used for addressing.
-- The geometric error of a tile comes from the length of its edges on the reference surface.
-- Implicit coordinates map directly to the address on the face: `x` and `y` grow like the tile axes, whatever the scheme of the source.
-- Subtrees with their own levels, such as the polar caps of the Moon, register at their address like the other implicit subtrees.
-- Quadtree balance follows the topology of the index: the neighbour across a face edge may be turned, and edges of two faces balance like any other.
+The runtime source of a whole body on the [cube index](celestial-tiling.md), `createCubeImplicitSource`, is on the `experimental/cube` branch until it is validated. The cube addressing, its topology and the reprojection of `@spacexr/tiles` stay here.
 
 ## Base selection for runtime owned geometry
 
@@ -260,4 +254,4 @@ When quadtree balancing is enabled, one visible traversal is followed by a local
 
 The terrain source exposes geometric availability independently of the physical DEM. A deeper geometric tile may prepare its content from a sub-area of a measured ancestor or from generated heights. The DEM and imagery adapters own their availability, interpolation and cache identities; the generic runtime does not create DEM pages or request nonexistent source levels.
 
-The `active` strategy remains the default for existing integrations during migration. The Mercator example explicitly uses `base` for both CPU and GPU, while the cube example retains its existing strategy until its own adaptation and validation.
+The `active` strategy remains the default for existing integrations during migration. The Mercator example explicitly uses `base` for both CPU and GPU.
