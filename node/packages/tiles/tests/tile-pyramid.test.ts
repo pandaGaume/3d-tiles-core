@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { TileNeighbor, TilePyramid, tileAreaInAncestor, type ITileAddress } from "../src";
 
@@ -17,6 +17,119 @@ describe("tileAreaInAncestor", () => {
     it("locates a tile in its ancestor", () => {
         expect(tileAreaInAncestor({ lod: 3, x: 5, y: 2 }, 2)).toEqual({ ancestor: { lod: 1, x: 1, y: 0 }, west: 0.25, north: 0.5, size: 0.25 });
         expect(tileAreaInAncestor({ lod: 3, x: 5, y: 2 }, 0)).toEqual({ ancestor: { lod: 3, x: 5, y: 2 }, west: 0, north: 0, size: 1 });
+    });
+});
+
+describe("TilePyramid withdrawing requests", () => {
+    function pendingLoader() {
+        const signals: AbortSignal[] = [];
+        const finish: Array<(content: string) => void> = [];
+        const load = (_address: ITileAddress, signal?: AbortSignal) => {
+            signals.push(signal!);
+            return new Promise<string | undefined>((resolve) => finish.push(resolve));
+        };
+        return { signals, finish, load };
+    }
+    const tile = { lod: 2, x: 1, y: 1 };
+
+    it("aborts a load and forgets it when the only request withdraws", async () => {
+        const { signals, load } = pendingLoader();
+        const pyramid = new TilePyramid({ load, maxLOD: 4 });
+        const controller = new AbortController();
+        const request = pyramid.load(tile, controller.signal);
+
+        controller.abort();
+        await expect(request).rejects.toBeDefined();
+        expect(signals[0]!.aborted).toBe(true);
+        expect(pyramid.size).toBe(0);
+
+        void pyramid.load(tile);
+        expect(signals).toHaveLength(2);
+    });
+
+    it("goes on for the other requests, which are not disturbed", async () => {
+        const { signals, finish, load } = pendingLoader();
+        const pyramid = new TilePyramid({ load, maxLOD: 4 });
+        const first = new AbortController();
+        const second = new AbortController();
+        const leaving = pyramid.load(tile, first.signal);
+        const staying = pyramid.load(tile, second.signal);
+
+        first.abort();
+        await expect(leaving).rejects.toBeDefined();
+        expect(signals[0]!.aborted).toBe(false);
+
+        finish[0]!("content");
+        expect((await staying)?.content).toBe("content");
+        expect(pyramid.size).toBe(1);
+    });
+
+    it("never aborts a load a request without a signal waits for", async () => {
+        const { signals, finish, load } = pendingLoader();
+        const pyramid = new TilePyramid({ load, maxLOD: 4 });
+        const controller = new AbortController();
+        const leaving = pyramid.load(tile, controller.signal);
+        const pinned = pyramid.load(tile);
+
+        controller.abort();
+        await expect(leaving).rejects.toBeDefined();
+        expect(signals[0]!.aborted).toBe(false);
+        finish[0]!("content");
+        expect((await pinned)?.content).toBe("content");
+    });
+
+    it("waits before aborting, and goes on if the tile comes back in the meantime", async () => {
+        vi.useFakeTimers();
+        try {
+            const { signals, finish, load } = pendingLoader();
+            const pyramid = new TilePyramid({ load, maxLOD: 4, abortDelayMilliseconds: 500 });
+            const controller = new AbortController();
+            const leaving = pyramid.load(tile, controller.signal);
+            controller.abort();
+            await expect(leaving).rejects.toBeDefined();
+
+            vi.advanceTimersByTime(499);
+            expect(signals[0]!.aborted).toBe(false);
+            const back = pyramid.load(tile);
+            vi.advanceTimersByTime(1000);
+            expect(signals[0]!.aborted).toBe(false);
+            expect(signals).toHaveLength(1);
+
+            finish[0]!("content");
+            expect((await back)?.content).toBe("content");
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("aborts once the delay has passed without a new request", async () => {
+        vi.useFakeTimers();
+        try {
+            const { signals, load } = pendingLoader();
+            const pyramid = new TilePyramid({ load, maxLOD: 4, abortDelayMilliseconds: 500 });
+            const controller = new AbortController();
+            const leaving = pyramid.load(tile, controller.signal);
+            controller.abort();
+            await expect(leaving).rejects.toBeDefined();
+
+            vi.advanceTimersByTime(500);
+            expect(signals[0]!.aborted).toBe(true);
+            expect(pyramid.size).toBe(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("keeps a loaded tile when a request withdraws afterwards", async () => {
+        const { finish, load } = pendingLoader();
+        const pyramid = new TilePyramid({ load, maxLOD: 4 });
+        const controller = new AbortController();
+        const request = pyramid.load(tile, controller.signal);
+        finish[0]!("content");
+        await request;
+
+        controller.abort();
+        expect(pyramid.get(tile)).toBe("content");
     });
 });
 

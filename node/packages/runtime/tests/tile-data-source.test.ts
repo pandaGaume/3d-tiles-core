@@ -28,8 +28,16 @@ describe("tile data source metrics", () => {
             y: 1535,
         });
         expect(dataSource.resolve({ level: 9, x: 0, y: 0 }).contents[0]?.uri).toBe("https://terrain.test/12/2048/1535.png");
-        expect(dataSource.resolve({ level: 0, x: 0, y: 0 }).geometricError).toBeCloseTo(metrics.groundResolution(0, 3));
-        expect(dataSource.resolve({ level: 9, x: 0, y: 0 }).geometricError).toBeCloseTo(metrics.groundResolution(0, 12));
+        // The ground size of the largest cell of the tile: its row nearest the equator.
+        const largestCell = (lod: number, x: number, y: number): number => {
+            const north = metrics.getTileXYToLatLon(x, y, lod).latitude;
+            const south = metrics.getTileXYToLatLon(x, y + 1, lod).latitude;
+            return metrics.groundResolution(north >= 0 && south <= 0 ? 0 : Math.min(Math.abs(north), Math.abs(south)), lod);
+        };
+        const root = dataSource.addressOf({ level: 0, x: 0, y: 0 });
+        expect(dataSource.resolve({ level: 0, x: 0, y: 0 }).geometricError).toBeCloseTo(largestCell(root.lod, root.x, root.y));
+        expect(dataSource.resolve({ level: 9, x: 0, y: 0 }).geometricError).toBeCloseTo(largestCell(12, 2048, 1535));
+        expect(dataSource.resolve({ level: 9, x: 0, y: 0 }).geometricError).toBeLessThan(metrics.groundResolution(0, 12));
         expect(() => dataSource.addressOf({ level: 10, x: 0, y: 0 })).toThrow(/maxLOD 12/);
     });
 

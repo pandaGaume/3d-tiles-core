@@ -83,6 +83,19 @@ describe("the vertical displacement", () => {
 describe("EcefSpatialMetric with a vertical placement", () => {
     const placement = (value: number) => ({ scale: new VerticalScale(value), frame: radialVerticalFrame(reference) });
 
+    it("reads the same lowest terrain as a fresh metric, once the scale comes back", () => {
+        const scale = new VerticalScale(3);
+        const frame = radialVerticalFrame(reference);
+        const used = new EcefSpatialMetric({ geodeticSystem: moon, vertical: { scale, frame }, horizon: "tile-heights" });
+        used.derive({ tile: tileAt(0), heightRange: [-3000, 0] });
+        scale.set(1);
+        const fresh = new EcefSpatialMetric({ geodeticSystem: moon, vertical: { scale, frame }, horizon: "tile-heights" });
+        fresh.derive({ tile: tileAt(0), heightRange: [-1000, 0] });
+
+        const lowest = (metric: EcefSpatialMetric) => (metric as unknown as { lowestUnscaledHeight: number }).lowestUnscaledHeight;
+        expect(lowest(used)).toBeCloseTo(lowest(fresh), 9);
+    });
+
     it("keeps the bounds of scale 1", () => {
         const placed = new EcefSpatialMetric({ geodeticSystem: moon, vertical: placement(1) }).derive({ tile: tileAt(1000) });
         const plain = new EcefSpatialMetric({ geodeticSystem: moon }).derive({ tile: tileAt(1000) });

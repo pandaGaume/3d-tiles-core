@@ -6,8 +6,24 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Changed
+
+- `coarseningDelayFrames` of `TileRuntime` becomes `coarseningDelayMilliseconds`, 300 by default: it starts again whenever the refinement is required, and asks for a frame when it expires, with a still camera too.
+- The geometric error of a Web Mercator tile is the ground size of its largest cell at its latitude, instead of at the equator, which changes the tiles selected at one threshold.
+- `tile.refine` and `tile.coarsen` count what a frame changed. `tile.refine.attempt` and `tile.coarsen.attempt` count the passes of the balance, `cut.entered` and `cut.left` the tiles of the cut.
+
+### Fixed
+
+- `TilePyramid.load`, `RasterPyramid.load` and `DemPyramid.tileHeights` take a signal: a request withdraws, and a load nobody else waits for is aborted down to its HTTP request, after `abortDelayMilliseconds` so that a tile coming back right away does not load twice.
+- A cancelled activation gives its load slot back at once, and its tile loads again when it returns, without a camera motion.
+- A waiting load follows the priority of the current frame, up or down.
+- A tile that satisfies its threshold creates no child, which removed a cycle of creations and evictions on a fixed cut under the tile budget.
+- The lowest terrain of the `tile-heights` horizon follows the vertical scale.
+
 ### Added
 
+- `refinementThresholdScale` of `TileRuntime` holds back new refinements, for example while a camera moves fast, without coarsening tiles already refined or delaying what the quadtree balance requires, and `requestFrame` asks for a frame when the camera is still.
+- `docs/terrain-pipeline.md`, the proposal realigning the renderers on `docs/grid.md`, and `docs/terrain-test-log.md`, which records what was tried, what failed and what not to try again, with raw reports in `docs/terrain-tests`.
 - Elevation whose depth varies from place to place: `servingLevel` of `CelestialTileSource`, `TilePyramid` and `RasterPyramid`, and `terrainDataLevel` of `DrapeInstanceCut`. `cubeDemPyramid` reads a sub-area of the deepest tile at each place instead of interpolating the levels a dataset does not declare, and `isAvailable` no longer scans its subtrees.
 - `completeTileCover` of `@spacexr/raster`: the tiles completing a cut into a cover of its roots, for a renderer to draw coarse terrain where a selection left no tile.
 - `workingSetFactor` of the runtime cache: budgets of entries and tiles that grow with what the view uses, and fixed byte budgets. It defaults to fixed budgets.

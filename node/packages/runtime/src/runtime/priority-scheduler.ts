@@ -26,12 +26,18 @@ export class PriorityScheduler {
         if (this.disposed || this.running.has(key)) return false;
         const existing = this.queued.get(key);
         if (existing) {
-            existing.priority = Math.max(existing.priority, priority);
+            existing.priority = priority;
             return false;
         }
         this.queued.set(key, { key, priority, order: this.order++, run, controller: new AbortController() });
         this.pump();
         return true;
+    }
+
+    /** Changes the priority of a task still waiting, up or down. */
+    public reprioritize(key: string, priority: number): void {
+        const queued = this.queued.get(key);
+        if (queued) queued.priority = priority;
     }
 
     public cancel(key: string): void {

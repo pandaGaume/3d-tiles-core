@@ -228,7 +228,7 @@ describe("TileRuntime", () => {
             maxScreenSpaceError: 10,
             refinementHysteresisRatio: 0.2,
             // Immediate coarsening and no preloading: the scenario follows each frame.
-            coarseningDelayFrames: 0,
+            coarseningDelayMilliseconds: 0,
             preloadSiblings: false,
         });
 
@@ -243,6 +243,56 @@ describe("TileRuntime", () => {
         expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["hysteresis/root"]);
         expect(runtime.instrumentation.snapshot().metrics["tile.refine"]?.count).toBe(1);
         expect(runtime.instrumentation.snapshot().metrics["tile.coarsen"]?.count).toBe(1);
+        await runtime.dispose();
+    });
+
+    it("holds back new refinements only, with its threshold scale", async () => {
+        const tileset: ITileset = {
+            asset: { version: "1.1" },
+            geometricError: 16,
+            root: {
+                ...tile("root.glb", 16),
+                refine: "REPLACE",
+                children: [tile("child.glb")],
+            },
+        };
+        const adapter: IRuntimeAdapter<IFakeCamera, IFakeSpatial, IFakeHandle, string> = {
+            tilesets: tilesetLoader(tileset),
+            spatial: new FakeSpatialMetric(),
+            content: {
+                load: async (context) => ({ kind: "renderable", handle: { uri: context.uri } }),
+                attach: () => undefined,
+                detach: () => undefined,
+            },
+        };
+        let scale = 4;
+        const runtime = new TileRuntime({
+            id: "scale",
+            uri: "https://example.test/tileset.json",
+            adapter,
+            maxScreenSpaceError: 10,
+            refinementHysteresisRatio: 0.2,
+            refinementThresholdScale: () => scale,
+            coarseningDelayMilliseconds: 0,
+            preloadSiblings: false,
+        });
+
+        // An error of 16 is above the threshold of 10, and below 40.
+        await runtime.update({ multiplier: 1 });
+        await runtime.whenIdle();
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["scale/root"]);
+
+        scale = 1;
+        await runtime.update({ multiplier: 1 });
+        await runtime.whenIdle();
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["scale/root/0"]);
+
+        // A refined tile does not coarsen because the scale rises: only under 8, the threshold minus its hysteresis.
+        scale = 4;
+        await runtime.update({ multiplier: 0.6 });
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["scale/root/0"]);
+        await runtime.update({ multiplier: 0.49 });
+        expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["scale/root"]);
         await runtime.dispose();
     });
 
@@ -286,7 +336,7 @@ describe("TileRuntime", () => {
             maxScreenSpaceError: 10,
             cache: { maxContentEntries: 1, unusedRetentionMilliseconds: 60_000 },
             // Immediate coarsening and no preloading: the scenario follows each frame.
-            coarseningDelayFrames: 0,
+            coarseningDelayMilliseconds: 0,
             preloadSiblings: false,
         });
 
@@ -342,7 +392,7 @@ describe("TileRuntime", () => {
                     unusedRetentionMilliseconds: 60_000,
                     ...(workingSetFactor === undefined ? {} : { workingSetFactor }),
                 },
-                coarseningDelayFrames: 0,
+                coarseningDelayMilliseconds: 0,
                 preloadSiblings: false,
             });
             let evicted = 0;
@@ -399,7 +449,7 @@ describe("TileRuntime", () => {
             adapter,
             maxScreenSpaceError: 10,
             // Immediate coarsening and no preloading: the scenario follows each frame.
-            coarseningDelayFrames: 0,
+            coarseningDelayMilliseconds: 0,
             preloadSiblings: false,
         });
 
@@ -624,7 +674,7 @@ describe("TileRuntime", () => {
             maxScreenSpaceError: 10,
             cache: { maxContentEntries: 2, unusedRetentionMilliseconds: 60_000 },
             // Immediate coarsening and no preloading: the scenario follows each frame.
-            coarseningDelayFrames: 0,
+            coarseningDelayMilliseconds: 0,
             preloadSiblings: false,
         });
         const publications: number[] = [];
@@ -716,16 +766,26 @@ describe("TileRuntime navigation defaults", () => {
         await runtime.dispose();
     });
 
-    it("keeps a refinement for 20 frames by default after nothing requires it", async () => {
+    it("keeps a refinement for 300 milliseconds by default after nothing requires it", async () => {
         const { adapter } = rotationScenario();
-        const runtime = new TileRuntime({ id: "delay", uri: "https://example.test/tileset.json", adapter, maxScreenSpaceError: 10 });
+        let now = 0;
+        const runtime = new TileRuntime({
+            clock: () => now,
+            id: "delay",
+            uri: "https://example.test/tileset.json",
+            adapter,
+            maxScreenSpaceError: 10,
+        });
 
         await runtime.update({ multiplier: 1 });
         await runtime.whenIdle();
         // The screen-space error no longer requires the refinement.
-        for (let frame = 0; frame < 19; frame++) await runtime.update({ multiplier: 0 });
+        await runtime.update({ multiplier: 0 });
+        now = 299;
+        await runtime.update({ multiplier: 0 });
         expect(runtime.selectedTiles.map((node) => node.id)).not.toContain("delay/root");
-        for (let frame = 0; frame < 3; frame++) await runtime.update({ multiplier: 0 });
+        now = 300;
+        await runtime.update({ multiplier: 0 });
         expect(runtime.selectedTiles.map((node) => node.id)).toEqual(["delay/root"]);
         await runtime.dispose();
     });
@@ -759,7 +819,7 @@ describe("TileRuntime cache retention", () => {
             maxScreenSpaceError: 10,
             cache,
             clock,
-            coarseningDelayFrames: 0,
+            coarseningDelayMilliseconds: 0,
         });
         return { runtime, disposals };
     }
@@ -873,7 +933,7 @@ describe("TileRuntime zoom out", () => {
             adapter,
             maxScreenSpaceError: 10,
             preloadSiblings,
-            coarseningDelayFrames: 0,
+            coarseningDelayMilliseconds: 0,
         });
         return { runtime, westLoad };
     }

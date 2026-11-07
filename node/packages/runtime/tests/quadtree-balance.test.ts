@@ -90,7 +90,8 @@ function createScenario(
     quadtreeBalance: boolean | { fillGaps: boolean },
     delayed?: (address: { lod: number; x: number; y: number }) => Promise<void> | undefined,
     preloadSiblings = false,
-    coarseningDelayFrames = 0,
+    coarseningDelayMilliseconds = 0,
+    clock?: () => number,
 ) {
     const source = createWebMapImplicitSource({ urlTemplates: "grid://{z}/{x}/{y}", maximumZoom: 3, subtreeLevels: 4 });
     const adapter: IRuntimeAdapter<ICamera, ISpatial, string, never> = {
@@ -114,7 +115,8 @@ function createScenario(
         maxScreenSpaceError: 1,
         quadtreeBalance,
         preloadSiblings,
-        coarseningDelayFrames,
+        coarseningDelayMilliseconds,
+        ...(clock ? { clock } : {}),
         // More load slots than delayed tiles, so that the delayed loads do not block the others.
         maxConcurrentLoads: 8,
     });
@@ -268,8 +270,9 @@ describe("TileRuntime quadtree balance while turning", () => {
 });
 
 describe("TileRuntime coarsening delay", () => {
-    async function deepestLevelsAfterMovingAway(coarseningDelayFrames: number): Promise<number[]> {
-        const { runtime, camera, selected } = createScenario(false, undefined, false, coarseningDelayFrames);
+    async function deepestLevelsAfterMovingAway(coarseningDelayMilliseconds: number): Promise<number[]> {
+        let now = 0;
+        const { runtime, camera, selected } = createScenario(false, undefined, false, coarseningDelayMilliseconds, () => now);
         await runtime.update(camera);
         await runtime.whenIdle();
         await runtime.update(camera);
@@ -279,6 +282,7 @@ describe("TileRuntime coarsening delay", () => {
         const away: ICamera = { focus: [2.5, -0.8] };
         const levels: number[] = [];
         for (let frame = 0; frame < 6; frame++) {
+            now = frame * 100;
             await runtime.update(away);
             levels.push(
                 Math.max(
@@ -292,8 +296,8 @@ describe("TileRuntime coarsening delay", () => {
         return levels;
     }
 
-    it("keeps a refinement for the configured number of frames once nothing requires it", async () => {
-        expect(await deepestLevelsAfterMovingAway(3)).toEqual([3, 3, 3, 1, 1, 1]);
+    it("keeps a refinement for the configured time once nothing requires it", async () => {
+        expect(await deepestLevelsAfterMovingAway(300)).toEqual([3, 3, 3, 1, 1, 1]);
     });
 
     it("coarsens at once without delay", async () => {

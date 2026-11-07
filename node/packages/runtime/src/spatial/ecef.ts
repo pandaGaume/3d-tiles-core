@@ -32,7 +32,8 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
     private readonly horizonCulling: boolean;
     private readonly horizon: "plane" | "tile-heights";
     /** Lowest terrain measured on any tile so far, over the reference surface, in metres. */
-    private lowestHeight = 0;
+    /** Lowest terrain measured, without the vertical scale, which may change later. */
+    private lowestUnscaledHeight = 0;
     private readonly defaultViewportHeight: number;
     private readonly defaultVerticalFovRadians: number;
     private readonly utmOptions: IUtmPlacementOptions;
@@ -87,7 +88,10 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
     public derive(context: ISpatialDerivationContext<IEcefSpatialState>): IEcefSpatialState {
         const unscaled = this.deriveUnscaled(context);
         const state = context.heightRange ? { ...unscaled, heightRange: context.heightRange } : unscaled;
-        if (context.heightRange) this.lowestHeight = Math.min(this.lowestHeight, context.heightRange[0]);
+        if (context.heightRange) {
+            const scale = this.vertical?.scale.value ?? 1;
+            if (scale > 0) this.lowestUnscaledHeight = Math.min(this.lowestUnscaledHeight, context.heightRange[0] / scale);
+        }
         return this.vertical ? placeVertically(state, this.vertical, context.parent) : state;
     }
 
@@ -133,7 +137,13 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
             const radius = this.system.ellipsoid.minimumRadius;
             const hidden =
                 this.horizon === "tile-heights"
-                    ? isSphereBeyondHorizon(spatial.boundingSphere, camera.position, radius, this.lowestHeight, spatial.heightRange)
+                    ? isSphereBeyondHorizon(
+                          spatial.boundingSphere,
+                          camera.position,
+                          radius,
+                          this.lowestUnscaledHeight * (this.vertical?.scale.value ?? 1),
+                          spatial.heightRange,
+                      )
                     : isSphereBelowConservativeHorizon(spatial.boundingSphere, camera.position, radius);
             if (hidden) return false;
         }

@@ -7,7 +7,7 @@ import type { ChildHeightRanges } from "./child-height-ranges";
 
 /** Loader fetching and decoding the tiles of a web DEM source. */
 export function webDemTileLoader(source: IDemTileSource, decoder: IDemDecoder): TileContentLoader<IHeightGrid> {
-    return async (address) => (await loadDemTile(source, address, decoder))?.content;
+    return async (address, signal) => (await loadDemTile(source, address, decoder, signal ? { signal } : {}))?.content;
 }
 
 /**
@@ -19,14 +19,14 @@ export function webDemTileLoader(source: IDemTileSource, decoder: IDemDecoder): 
 export function cubeDemTileLoader(source: CelestialTileSource, decoder: IDemDecoder): TileContentLoader<IHeightGrid> {
     const { content, encoding } = source.dataset;
     if (content !== "elevation") throw new RangeError(`Dataset of ${source.dataset.body} holds ${content}, not elevation.`);
-    return async (address) => {
-        const result = await source.fetchTile(address);
+    return async (address, signal) => {
+        const result = await source.fetchTile(address, signal);
         return result.status === "absent" ? undefined : decoder.decodeDem(result.bytes, encoding as DemEncoding, undefined);
     };
 }
 
 /** Options of {@link cubeDemPyramid}. */
-export interface ICubeDemPyramidOptions extends Pick<IDemPyramidOptions, "cacheEntries" | "childHeightRanges" | "onStitched"> {
+export interface ICubeDemPyramidOptions extends Pick<IDemPyramidOptions, "cacheEntries" | "abortDelayMilliseconds" | "childHeightRanges" | "onStitched"> {
     /**
      * Deepest level of generated tiles, which interpolate the dataset bilinearly below its deepest level, the same everywhere.
      * Defaults to none: a tile deeper than the dataset at its place, inside or outside its subtrees, reads a sub-area of the
@@ -138,9 +138,11 @@ export class DemPyramid {
     /**
      * Loads the heights of a tile with its range and the ranges of its four children, which are also recorded in
      * `childHeightRanges`. Returns `undefined` when the pyramid has no DEM tile there.
+     *
+     * @param signal - Withdraws this request, which then rejects. A load nobody else waits for is aborted.
      */
-    public async tileHeights(address: ITileAddress): Promise<IDemTileHeights | undefined> {
-        const region = await this.rasters.load(address);
+    public async tileHeights(address: ITileAddress, signal?: AbortSignal): Promise<IDemTileHeights | undefined> {
+        const region = await this.rasters.load(address, signal);
         if (!region) return undefined;
         const quadrants: QuadrantHeightRanges = [region.range(0, 0, 0.5, 0.5), region.range(0.5, 0, 1, 0.5), region.range(0, 0.5, 0.5, 1), region.range(0.5, 0.5, 1, 1)];
         this.childHeightRanges?.recordChildren(address, quadrants);
