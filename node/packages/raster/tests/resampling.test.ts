@@ -81,6 +81,65 @@ describe("generateChildRaster", () => {
         expect([...child.data].every((value) => Math.abs(value - 5) < 1e-6)).toBe(true);
     });
 
+    it("matches scalar cubic interpolation exactly over every child sample, including NaN stencils and odd sizes", () => {
+        for (const size of [8, 9]) {
+            for (const parentSamples of ["pixels", "lattice"] as const) {
+                for (const holes of [false, true]) {
+                    const stored: LatticeSampler = (x, y) =>
+                        holes && (x % 7 === 0 || y % 11 === 0) ? Number.NaN : Math.fround(Math.sin(x * 0.37) * 4817 + Math.cos(y * 0.29) * 933);
+                    const sample: LatticeSampler =
+                        parentSamples === "lattice"
+                            ? stored
+                            : (x, y) => {
+                                  let sum = 0;
+                                  let count = 0;
+                                  for (const value of [stored(x - 1, y - 1), stored(x, y - 1), stored(x - 1, y), stored(x, y)]) {
+                                      if (Number.isNaN(value)) continue;
+                                      sum += value;
+                                      count++;
+                                  }
+                                  return count === 0 ? Number.NaN : sum / count;
+                              };
+                    const parent = { lod: 4, x: 3, y: 5 };
+                    const tiles = neighborhood(stored, parent, size);
+                    for (const column of [0, 1]) {
+                        for (const row of [0, 1]) {
+                            const child = generateChildRaster(tiles, column, row, "cubic", parentSamples);
+                            const expected = new Float32Array(size * size);
+                            for (let j = 0; j < size; j++) {
+                                for (let i = 0; i < size; i++) {
+                                    const x = parent.x * size + (column * size + i) / 2;
+                                    const y = parent.y * size + (row * size + j) / 2;
+                                    expected[j * size + i] = interpolateLattice(sample, x, y, "cubic");
+                                }
+                            }
+                            expect(child.data).toEqual(expected);
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    it("preserves double precision and clamped border stencils when cubic neighbours are absent", () => {
+        const width = 7;
+        const height = 5;
+        const data = Float64Array.from({ length: width * height }, (_, i) => Math.sin(i * 0.73) * 12345678.90123);
+        const parent = createRasterGrid(width, height, 1, data);
+        const tiles = [undefined, undefined, undefined, undefined, parent];
+        const sample: LatticeSampler = (x, y) => data[Math.max(0, Math.min(height - 1, y)) * width + Math.max(0, Math.min(width - 1, x))]!;
+        for (const column of [0, 1]) {
+            for (const row of [0, 1]) {
+                const child = generateChildRaster(tiles, column, row, "cubic");
+                const expected = new Float64Array(data.length);
+                for (let j = 0; j < height; j++) {
+                    for (let i = 0; i < width; i++) expected[j * width + i] = interpolateLattice(sample, (column * width + i) / 2, (row * height + j) / 2, "cubic");
+                }
+                expect(child.data).toEqual(expected);
+            }
+        }
+    });
+
     it("keeps the channels and array type of the parent, and rejects inconsistent neighbourhoods", () => {
         const rgba = createRasterGrid(2, 2, 4, new Uint8ClampedArray(16).fill(200));
         const child = generateChildRaster([undefined, undefined, undefined, undefined, rgba, undefined, undefined, undefined, undefined], 1, 1, "bilinear");

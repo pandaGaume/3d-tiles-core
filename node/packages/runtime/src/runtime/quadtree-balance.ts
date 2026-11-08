@@ -1,4 +1,5 @@
 import {
+    TILE_CORNER_NEIGHBORS,
     TILE_EDGE_NEIGHBORS,
     ancestorTileAddress,
     tileAddressKey,
@@ -28,6 +29,27 @@ function edgeNeighbor(location: IQuadtreeTileLocation, edge: TileEdgeNeighbor): 
 
 export function quadtreeTileKey(namespace: string, address: ITileAddress): string {
     return `${namespace}${tileAddressKey(address)}`;
+}
+
+/**
+ * Whether a tile is the neighbour of one of some tiles: it touches one of them, by an edge or a corner, that is at its
+ * level or coarser. A tile coarser than the one it touches is not its neighbour.
+ *
+ * @param location - The tile.
+ * @param tiles - Keys built with {@link quadtreeTileKey}.
+ */
+export function quadtreeTouches(location: IQuadtreeTileLocation, tiles: ReadonlySet<string>): boolean {
+    if (tiles.size === 0) return false;
+    const { address, namespace, topology, wrapX } = location;
+    for (const position of [...TILE_EDGE_NEIGHBORS, ...TILE_CORNER_NEIGHBORS]) {
+        const neighbor = topology ? topology.neighbor(address, position)?.address : tileNeighborAddress(address, position, { wrapX });
+        if (!neighbor) continue;
+        if (tiles.has(quadtreeTileKey(namespace, neighbor))) return true;
+        for (let levels = 1; levels <= neighbor.lod; levels++) {
+            if (tiles.has(quadtreeTileKey(namespace, ancestorTileAddress(neighbor, levels)))) return true;
+        }
+    }
+    return false;
 }
 
 /** A displayed tile next to a displayed tile two or more levels coarser. */
@@ -89,4 +111,96 @@ export function quadtreeBalanceRefinements(displayed: Iterable<IQuadtreeTileLoca
         }
     }
     return refinements;
+}
+
+/** A leaf of a ready quadtree cut. */
+export interface IQuadtreeCutTile<T> {
+    location: IQuadtreeTileLocation;
+    value: T;
+}
+
+/**
+ * Admits a ready cut exclusively by refining incompatible coarse neighbours. Existing fine leaves never coarsen.
+ * Each successful split strictly increases depth; only its front and the fine leaf return to the local queue.
+ * A cold front is requested once, and makes the whole transaction inadmissible without publishing a partial cut.
+ *
+ * @param blocked - Receives, for each edge a cold front leaves two levels apart or more, the tiles of `displayed`
+ * that led to it: the coarse tile, or the one it was split from, and the fine tile with every tile split for it.
+ */
+export function refineQuadtreeCut<T>(
+    displayed: Iterable<IQuadtreeCutTile<T>>,
+    refine: (coarse: IQuadtreeCutTile<T>) => readonly IQuadtreeCutTile<T>[] | undefined,
+    blocked?: (involved: readonly IQuadtreeCutTile<T>[]) => void,
+): IQuadtreeCutTile<T>[] | undefined {
+    const leaves = new Map<string, IQuadtreeCutTile<T>>();
+    const queue: IQuadtreeCutTile<T>[] = [];
+    const unavailable = new Set<string>();
+    // The tiles of the input each leaf comes from: itself, or the tiles whose splits produced it.
+    const origins = new Map<IQuadtreeCutTile<T>, readonly IQuadtreeCutTile<T>[]>();
+    const keyOf = ({ location }: IQuadtreeCutTile<T>): string => quadtreeTileKey(location.namespace, location.address);
+    for (const tile of displayed) {
+        leaves.set(keyOf(tile), tile);
+        queue.push(tile);
+        origins.set(tile, [tile]);
+    }
+    const involved = (fine: IQuadtreeCutTile<T>, coarse: IQuadtreeCutTile<T>): IQuadtreeCutTile<T>[] => [
+        ...new Set([...origins.get(fine)!, ...origins.get(coarse)!]),
+    ];
+    const covering = (namespace: string, address: ITileAddress): IQuadtreeCutTile<T> | undefined => {
+        for (let levels = 0; levels <= address.lod; levels++) {
+            const tile = leaves.get(quadtreeTileKey(namespace, levels === 0 ? address : ancestorTileAddress(address, levels)));
+            if (tile) return tile;
+        }
+        return undefined;
+    };
+    while (queue.length > 0) {
+        const fine = queue.pop()!;
+        if (leaves.get(keyOf(fine)) !== fine) continue;
+        let coarse: IQuadtreeCutTile<T> | undefined;
+        for (const edge of TILE_EDGE_NEIGHBORS) {
+            const neighbor = edgeNeighbor(fine.location, edge);
+            if (!neighbor) continue;
+            const other = covering(fine.location.namespace, neighbor);
+            if (other && other.location.address.lod < fine.location.address.lod - 1) {
+                coarse = other;
+                break;
+            }
+        }
+        if (!coarse) continue;
+        if (unavailable.has(keyOf(coarse))) {
+            blocked?.(involved(fine, coarse));
+            continue;
+        }
+        const front = refine(coarse);
+        if (!front) {
+            unavailable.add(keyOf(coarse));
+            blocked?.(involved(fine, coarse));
+            continue;
+        }
+        const keys = new Set(front.map(keyOf));
+        if (keys.size !== front.length) throw new Error("A quadtree refinement front cannot contain duplicate leaves.");
+        for (const child of front) {
+            const { namespace, address } = child.location;
+            const difference = address.lod - coarse.location.address.lod;
+            if (
+                difference <= 0 ||
+                namespace !== coarse.location.namespace ||
+                quadtreeTileKey(namespace, ancestorTileAddress(address, difference)) !== keyOf(coarse)
+            )
+                throw new Error("A quadtree refinement must return strict descendants of the coarse leaf in its namespace.");
+            for (let levels = 1; levels < difference; levels++) {
+                if (keys.has(quadtreeTileKey(namespace, ancestorTileAddress(address, levels))))
+                    throw new Error("A quadtree refinement front cannot overlap itself.");
+            }
+        }
+        leaves.delete(keyOf(coarse));
+        const origin = involved(fine, coarse);
+        for (const child of front) {
+            leaves.set(keyOf(child), child);
+            queue.push(child);
+            origins.set(child, origin);
+        }
+        queue.push(fine);
+    }
+    return unavailable.size === 0 ? [...leaves.values()] : undefined;
 }

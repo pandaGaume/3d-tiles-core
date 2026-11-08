@@ -1,7 +1,7 @@
 import type { ITileAddress } from "@spacexr/tiles";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { ChildHeightRanges, DemPyramid, createHeightGrid, selectSurfaceLevels, webMercatorSurfaceNormal } from "../src";
+import { ChildHeightRanges, DemPyramid, createHeightGrid, createMapzenTerrariumSource, selectSurfaceLevels, webDemTileLoader, webMercatorSurfaceNormal } from "../src";
 
 /** Plane `height = 1000 * x + 500 * y` over the whole pyramid, sampled at the pixel centres of 4 x 4 tiles. */
 function planeTile(address: ITileAddress) {
@@ -102,5 +102,28 @@ describe("webMercatorSurfaceNormal", () => {
         expect(normal.y).toBeCloseTo(-1 / Math.sqrt(3), 6);
         expect(normal.z).toBeCloseTo(1 / Math.sqrt(3), 6);
         expect(Math.hypot(normal.x, normal.y, normal.z)).toBeCloseTo(1, 12);
+    });
+});
+
+describe("webDemTileLoader", () => {
+    it("passes decoded heights directly to the pyramid and forwards cancellation", async () => {
+        const source = createMapzenTerrariumSource();
+        const bytes = new Uint8Array([1, 2, 3]);
+        const fetchTile = vi.spyOn(source.source, "fetchTile").mockResolvedValue({ status: "ok", url: "memory://dem", bytes, contentType: undefined });
+        const grid = createHeightGrid(2, 2, new Float32Array([1, 2, Number.NaN, 4]));
+        const decodeDem = vi.fn(async () => grid);
+        const address = { lod: 1, x: 0, y: 0 };
+        const signal = new AbortController().signal;
+        expect(await webDemTileLoader(source, { decodeDem })(address, signal)).toBe(grid);
+        expect(fetchTile).toHaveBeenCalledWith(address, signal);
+        expect(decodeDem).toHaveBeenCalledWith(bytes, source.encoding, { signal });
+    });
+
+    it("does not decode a tile reported absent", async () => {
+        const source = createMapzenTerrariumSource();
+        vi.spyOn(source.source, "fetchTile").mockResolvedValue({ status: "absent", url: "memory://dem", httpStatus: 404 });
+        const decodeDem = vi.fn();
+        expect(await webDemTileLoader(source, { decodeDem })({ lod: 1, x: 0, y: 0 })).toBeUndefined();
+        expect(decodeDem).not.toHaveBeenCalled();
     });
 });

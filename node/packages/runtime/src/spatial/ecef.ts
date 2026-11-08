@@ -131,6 +131,21 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
      * @returns `true` when the tile may contribute to the current view.
      */
     public isVisible(spatial: IEcefSpatialState, camera: IEcefCameraFrame): boolean {
+        return this.isInside(spatial, camera, camera.frustumPlanes);
+    }
+
+    /**
+     * Whether a tile is inside the wider planes around the view, with the same bounds and horizon as {@link isVisible}.
+     *
+     * @param spatial - Derived tile state.
+     * @param camera - Camera expressed in ECEF metres.
+     * @returns `true` when the camera has such planes and the tile may lie inside them.
+     */
+    public isInPeriphery(spatial: IEcefSpatialState, camera: IEcefCameraFrame): boolean {
+        return camera.peripheryFrustumPlanes !== undefined && this.isInside(spatial, camera, camera.peripheryFrustumPlanes);
+    }
+
+    private isInside(spatial: IEcefSpatialState, camera: IEcefCameraFrame, planes: IEcefCameraFrame["frustumPlanes"]): boolean {
         if (camera.clipBounds && spatial.boundingBox && !boxesIntersect(spatial.boundingBox, camera.clipBounds)) return false;
         if (!spatial.boundingSphere) return true;
         if (this.horizonCulling) {
@@ -147,7 +162,7 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
                     : isSphereBelowConservativeHorizon(spatial.boundingSphere, camera.position, radius);
             if (hidden) return false;
         }
-        if (camera.frustumPlanes?.some((plane) => sphereOutsidePlane(spatial.boundingSphere!, plane))) return false;
+        if (planes?.some((plane) => sphereOutsidePlane(spatial.boundingSphere!, plane))) return false;
         return true;
     }
 

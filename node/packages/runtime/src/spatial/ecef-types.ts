@@ -55,6 +55,8 @@ export interface IEcefCameraFrame {
     tanHalfVerticalFov?: number;
     /** Optional normalized ECEF frustum planes. */
     frustumPlanes?: readonly IPlane[];
+    /** Optional wider ECEF planes around the view: a tile between them and {@link frustumPlanes} is in the periphery. */
+    peripheryFrustumPlanes?: readonly IPlane[];
     /** Optional coarse ECEF clipping box. */
     clipBounds?: IAxisAlignedBox;
     /** Optional source timestamp in milliseconds. */

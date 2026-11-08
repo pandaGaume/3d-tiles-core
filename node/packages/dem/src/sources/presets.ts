@@ -39,3 +39,21 @@ export function createMapzenTerrariumSource(options: IPresetOptions = {}): IDemT
         encoding: "terrarium",
     };
 }
+
+/** Independent Mapzen provider normals. Alpha stores quantized elevation, not opacity. */
+export const MAPZEN_NORMALS_URL = "https://s3.amazonaws.com/elevation-tiles-prod/normal/{z}/{x}/{y}.png";
+
+/**
+ * Creates the physical Mapzen normal source, independently of terrain geometry, heights and imagery.
+ * Levels stop at 15; deeper geometry samples its ancestor UV area instead of generating normal tiles.
+ */
+export function createMapzenNormalsSource(options: IPresetOptions = {}): WebTileSource {
+    return new WebTileSource({
+        id: "mapzen-normals",
+        urlTemplate: MAPZEN_NORMALS_URL,
+        metrics: new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 15, tileSize: 256 }),
+        registration: "area",
+        attribution: MAPZEN_TERRARIUM_ATTRIBUTION,
+        ...(options.client ? { client: options.client } : {}),
+    });
+}
