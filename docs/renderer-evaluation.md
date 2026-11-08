@@ -60,10 +60,10 @@ The Babylon Lite experiment and its source code are not retained. Maintaining
 an additional adapter without a measurable frame-rate benefit, while losing
 the required geographic navigation, would create a dead implementation branch.
 
-Note of 2026-11-05: "with WebGPU" above does not describe the shaders. The
-adapter renders with WebGL by default, and every shader is written in GLSL. Its
-WebGPU engine only runs those shaders once Babylon.js has converted them to
-WGSL; no shader is written for WebGPU.
+Note of 2026-11-07: the adapter renders with WebGL from its GLSL shaders,
+and with WebGPU from WGSL shaders written for it; the two are compared pixel by
+pixel with `npm run compare:renderers`. Until then, its WebGPU engine ran the
+GLSL shaders converted to WGSL by Babylon.js.
 
 Babylon Lite may be reconsidered only if all of the following become true:
 

@@ -20,6 +20,9 @@ export interface IScreenSpaceErrorContext<TCamera, TSpatial> {
  */
 export interface ISpatialMetric<TCamera, TSpatial> {
     derive(context: ISpatialDerivationContext<TSpatial>): TSpatial;
+    /** Whether the tile is in the view of the camera. */
     isVisible(spatial: TSpatial, camera: TCamera): boolean;
+    /** Whether the tile, outside the view, is close enough to it to stay active. Without this method, no tile is. */
+    isInPeriphery?(spatial: TSpatial, camera: TCamera): boolean;
     screenSpaceError(context: IScreenSpaceErrorContext<TCamera, TSpatial>): number;
 }

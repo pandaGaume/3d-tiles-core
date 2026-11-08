@@ -68,6 +68,72 @@ export function interpolateLattice(sample: LatticeSampler, x: number, y: number,
     return weighted(corners, [(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy]);
 }
 
+interface ICubicAxis {
+    first: number;
+    count: number;
+    offsets: Int32Array;
+    weights: Float64Array;
+}
+
+/** Positions and weights shared by every row or column of a generated child. */
+function cubicAxis(size: number, quadrant: number): ICubicAxis {
+    const start = (quadrant * size) / 2;
+    const first = Math.floor(start) - 1;
+    const count = Math.floor(start + (size - 1) / 2) + 3 - first;
+    const offsets = new Int32Array(size);
+    const weights = new Float64Array(size * 4);
+    for (let i = 0; i < size; i++) {
+        const coordinate = (quadrant * size + i) / 2;
+        const cell = Math.floor(coordinate);
+        offsets[i] = cell - 1 - first;
+        weights.set(cubicWeights(coordinate - cell), i * 4);
+    }
+    return { first, count, offsets, weights };
+}
+
+/** Reuses the parent lattice instead of reading its same samples for every cubic stencil. */
+function writeCubicChild(
+    sample: LatticeSampler,
+    width: number,
+    height: number,
+    column: number,
+    row: number,
+    x: ICubicAxis,
+    y: ICubicAxis,
+    data: IRasterGrid["data"],
+    channels: number,
+    channel: number
+): void {
+    // Keep doubles here: a pixel-registered parent is averaged before interpolation, without intermediate rounding.
+    const lattice = new Float64Array(x.count * y.count);
+    for (let j = 0; j < y.count; j++) for (let i = 0; i < x.count; i++) lattice[j * x.count + i] = sample(x.first + i, y.first + j);
+    const cached: LatticeSampler = (i, j) => lattice[(j - y.first) * x.count + i - x.first]!;
+    for (let j = 0; j < height; j++) {
+        for (let i = 0; i < width; i++) {
+            let sum = 0;
+            let total = 0;
+            let missing = false;
+            for (let dy = 0; dy < 4; dy++) {
+                const offset = (y.offsets[j]! + dy) * x.count + x.offsets[i]!;
+                for (let dx = 0; dx < 4; dx++) {
+                    const value = lattice[offset + dx]!;
+                    const weight = x.weights[i * 4 + dx]! * y.weights[j * 4 + dy]!;
+                    if (Number.isNaN(value)) missing = true;
+                    if (weight === 0 || Number.isNaN(value)) continue;
+                    // Preserve the public interpolator's row-major accumulation and missing-data fallback.
+                    sum += value * weight;
+                    total += weight;
+                }
+            }
+            data[(j * width + i) * channels + channel] = missing
+                ? interpolateLattice(cached, (column * width + i) / 2, (row * height + j) / 2, "bilinear")
+                : total === 0
+                  ? Number.NaN
+                  : sum / total;
+        }
+    }
+}
+
 /**
  * Generates one child of a raster tile, one level finer, by interpolating the samples of the tile and of its eight
  * neighbours.
@@ -100,6 +166,8 @@ export function generateChildRaster<TData extends IRasterGrid["data"]>(
         }
     }
     const data = allocateLike(parent.data, width * height * channels);
+    const cubicX = interpolation === "cubic" && width >= 2 && height >= 2 ? cubicAxis(width, column) : undefined;
+    const cubicY = cubicX ? cubicAxis(height, row) : undefined;
     for (let channel = 0; channel < channels; channel++) {
         const stored: LatticeSampler = (x, y) => {
             // Tile of the neighbourhood holding the lattice position, clamped to the parent where it is missing.
@@ -113,9 +181,12 @@ export function generateChildRaster<TData extends IRasterGrid["data"]>(
         };
         const sample: LatticeSampler =
             parentSamples === "lattice" ? stored : (x, y) => weighted([stored(x - 1, y - 1), stored(x, y - 1), stored(x - 1, y), stored(x, y)], [1, 1, 1, 1]);
-        for (let j = 0; j < height; j++) {
-            for (let i = 0; i < width; i++) {
-                data[(j * width + i) * channels + channel] = interpolateLattice(sample, (column * width + i) / 2, (row * height + j) / 2, interpolation);
+        if (cubicX && cubicY) writeCubicChild(sample, width, height, column, row, cubicX, cubicY, data, channels, channel);
+        else {
+            for (let j = 0; j < height; j++) {
+                for (let i = 0; i < width; i++) {
+                    data[(j * width + i) * channels + channel] = interpolateLattice(sample, (column * width + i) / 2, (row * height + j) / 2, interpolation);
+                }
             }
         }
     }

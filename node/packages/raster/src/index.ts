@@ -1,6 +1,7 @@
 export * from "./drape-instances";
 export * from "./draping";
 export * from "./image";
+export * from "./png-data-decoder";
 export * from "./raster-grid";
 export * from "./raster-pyramid";
 export * from "./resampling";
