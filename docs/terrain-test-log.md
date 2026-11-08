@@ -26,6 +26,8 @@ What was tried on the terrain pipeline, what it gave and what not to try again. 
 | Reading `Material.shaderLanguage` to know what a material runs on WebGPU    | It reports WGSL for any material on WebGPU, a `ShaderMaterial` compiling GLSL included. Read `shaderLanguage` of the compiled effect       | T27   |
 | Comparing WebGL and WebGPU images with multisampling                        | 99 % of the differing pixels are edges resolved by the hardware and the graphics API, not the shaders. The comparison passes `antialias=0` | T27   |
 | A `forceGLSL` option as the reference of the WGSL                           | Rejected by the project owner on 2026-11-07: the comparison is WebGL from GLSL against WebGPU from WGSL                                    | T27   |
+| Reading the GPU `edge m` columns from 2026-11-07 to T28                     | The probe read the references of one instance grid for all of them: 3 to 8 km reported where the engine drew none. Fixed in T28            | T28   |
+| The terrain bench with `renderer=webgpu`                                    | It counts uploads through WebGL `bufferData` and stops on WebGPU. WebGPU is checked by `npm run compare:renderers`                         | T28   |
 
 ## How to measure
 
@@ -542,3 +544,23 @@ All paths on both engines, one run: grids of 64 cells, threshold of 10 pixels fo
 
 - **Cause:** on shaded and draped cases, 93 to 100 % of the differing pixels differ by one level of 255, the rounding of the same operations translated twice, by ANGLE to HLSL for WebGL and by Tint for WebGPU. The ambient case, which lights nothing and only reads imagery, has as many: texture filtering shows it too. The rest, 1 to 61 pixels, lie on an edge or a texel boundary of the debug imagery, moved by a pixel. In wireframe, lines move by a pixel: 45 of 46 differing pixels take the colour of a neighbour on the mesh engine. The mechanism inside each translation was not isolated.
 - **Legacy draped path of the GPU engine, forced for one run:** it compiles and draws in WGSL without validation error, 466 and 1 360 pixels differing on `mont-blanc`.
+
+### Main after the merge, 2026-11-08
+
+#### T28. Checking main after #32 of core and #18 of 3d-tiles-babylon
+
+- **Failed, in the probe:** the first bench of `main` reported shared vertices 8 085 m apart on `mont-blanc/gpu` and 6 044 m on `mont-blanc-zoom/gpu`, 6 000 and 3 361 m at rest, with heights of -4 755 and -2 638 m at Mont Blanc. Since `b0e44ca` the GPU engine spreads its instances over one grid per junction topology, and `gpuSharedEdges` still read the elevation references of `terrain.grid`, the grid of one topology, at the index of each instance in `placed`. Read on the grid and index of each instance, all 113 instances of a view had valid references. Bisected first: `54690ab` gave 0 m, `b0e44ca` 8 324 m, without the periphery too, 8 016 m. The same figures were in the runs of T24 to T26, which did not report this column. Raw report: `T28-main-stale-probe.json`.
+- **Failed, in the harness call:** `--query renderer=webgpu` stops the bench, which counts uploads through WebGL `bufferData`.
+- **Kept:** the probe reads each instance on its own grid, at its own index.
+- **Measured, one run, 8 s, with the Browser pane drawing the example at the same time on two paths:** 0 m between shared vertices on the four paths, in motion and at rest, and no hole at rest. Raw report: `T28-main.json`.
+
+| Path                   | FPS  | Hole frames | Worst pixels | Edge m |
+| ---------------------- | ---- | ----------- | ------------ | ------ |
+| `mont-blanc/mesh`      | 100  | 0           | 0            | 0      |
+| `mont-blanc/gpu`       | 89.2 | 2 of 239    | 14           | 0      |
+| `mont-blanc-zoom/mesh` | 91.9 | 5 of 366    | 415          | 0      |
+| `mont-blanc-zoom/gpu`  | 60.8 | 14 of 225   | 4 677        | 0      |
+
+- **Renderers:** `npm run compare:renderers` gives the figures of T27 on the 16 cases, within 7 pixels in wireframe.
+- **Places:** `place=yosemite`, 4 s on both engines in WebGL: 0 m, holes on 2 frames in motion, 31 and 82 pixels at worst. The Google example loads 274 tiles without error.
+- **Not solved:** the holes while zooming of T24 to T26 remain, in their range. Frame rates are not compared with T26: the Browser pane drew the example during this run.
