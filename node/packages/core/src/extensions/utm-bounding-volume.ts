@@ -1,5 +1,5 @@
-import { SPACEXR_BOUNDING_VOLUME_UTM } from "../model";
 import type { IBoundingVolume, IContent, IJsonObject, ITileset, IUtmBoundingVolume, Refinement, UtmHemisphere } from "../model";
+import { SPACEXR_BOUNDING_VOLUME_UTM } from "../model";
 
 /** UTM projection resolved from an EPSG code or from an explicit zone and hemisphere. */
 export interface IUtmProjection {

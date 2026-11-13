@@ -1,5 +1,5 @@
 import type { IBoundingVolume } from "./bounding-volume";
-import type { NonEmptyArray, IRootProperty } from "./common";
+import type { IRootProperty, NonEmptyArray } from "./common";
 import type { IImplicitTiling } from "./implicit-tiling";
 import type { IGroupMetadata, ILegacyPropertyRange, IMetadataEntity, IMetadataSchema, IStatistics } from "./metadata";
 

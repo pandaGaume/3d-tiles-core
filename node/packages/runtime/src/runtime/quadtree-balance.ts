@@ -17,7 +17,7 @@ export interface IQuadtreeTileLocation {
     address: ITileAddress;
     /** Wraps columns around the antimeridian, for pyramids covering every longitude. */
     wrapX: boolean;
-    /** How the tiles connect, for example across the faces of the cube index, in place of `wrapX`. */
+    /** How the tiles connect, for example across configured roots, in place of `wrapX`. */
     topology?: ITileTopology;
 }
 

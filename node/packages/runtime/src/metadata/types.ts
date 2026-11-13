@@ -4,9 +4,9 @@ import type {
     IMetadataClassProperty,
     IMetadataEntity,
     IMetadataSchema,
-    MetadataValue,
     ITile,
     ITileset,
+    MetadataValue,
 } from "@spacexr/3d-tiles-core";
 
 export type MetadataDiagnosticSeverity = "info" | "warning" | "error";

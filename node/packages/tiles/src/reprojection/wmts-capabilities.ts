@@ -3,7 +3,7 @@ import type { ISourceTileMatrix } from "./source-tile-matrix";
 /** A layer read from a WMTS capabilities document. */
 export interface IWmtsLayer {
     identifier: string;
-    /** `SupportedCRS` as written: Moon Trek polar layers write `EPSG::0`, so the projection must come from elsewhere. */
+    /** `SupportedCRS` as written: A provider polar layers write `EPSG::0`, so the projection must come from elsewhere. */
     crs: string | undefined;
     /** Media type of the tiles. An 8-bit format is for display: it holds no elevation. */
     format: string | undefined;
@@ -39,12 +39,11 @@ function required(value: string | undefined, name: string): string {
 
 /**
  * Reads a WMTS capabilities document, whose tiles are images, so in `area` registration, without any XML library, so that it also runs in a Cloudflare Worker, which has no
- * `DOMParser`. Comments are ignored: Moon Trek leaves old tile matrices in them.
+ * `DOMParser`. Comments are ignored: A provider leaves old tile matrices in them.
  *
  * Pixel sizes come from the geometry of the matrix: the rows of a level span the origin symmetrically, so a pixel is
  * `2 * originY / (MatrixHeight * TileHeight)`, in degrees or in metres. `ScaleDenominator` is not reliable: it assumes
- * degrees on the Earth (about 111 195 m) on geographic layers, whatever the body, and is 0.64 % off on the polar layers of
- * Mars, whose tiles only line up with the pixel size above. It is only used when the origin is 0.
+ * source-specific unit assumptions on geographic layers. Geometry-derived pixel size is preferred; the scale is used only when the origin is 0.
  *
  * @param xml - The document.
  * @param layerIdentifier - Layer to read. Defaults to the first one.
@@ -96,7 +95,7 @@ export function parseWmtsCapabilities(xml: string, layerIdentifier?: string): IW
 }
 
 /**
- * URL of a tile of a WMTS layer. Empty path segments are removed: Moon Trek templates hold `1.0.0//{Style}`.
+ * URL of a tile of a WMTS layer. Empty path segments are removed: A provider templates hold `1.0.0//{Style}`.
  *
  * @throws RangeError When the layer has no REST template.
  */

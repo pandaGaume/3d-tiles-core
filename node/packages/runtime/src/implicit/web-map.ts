@@ -1,6 +1,8 @@
 import type { IContent, IMetadataEntity, ITileset } from "@spacexr/3d-tiles-core";
+import type { GeodeticSystem } from "@spacexr/geodesy";
 import { expandTileUrlTemplate, toTmsY, validateTileUrlTemplate, type ITileUrlTemplateOptions } from "@spacexr/tiles";
 
+import { WebMercatorTileMetrics, type ITileMetrics } from "./metrics";
 import {
     ImplicitTilesetDecorator,
     type IImplicitTilesetDecoratorOptions,
@@ -8,7 +10,6 @@ import {
     type ITileDataSource,
     type ITileDataSourceTile,
 } from "./tile-data-source";
-import { WebMercatorTileMetrics, type ITileMetrics } from "./metrics";
 import type { IImplicitCoordinates } from "./types";
 
 /**
@@ -32,6 +33,8 @@ export interface IWebMapTileDataSourceOptions extends ITileUrlTemplateOptions {
 }
 
 export interface IWebMapImplicitSourceOptions extends IImplicitTilesetDecoratorOptions, ITileUrlTemplateOptions {
+    /** Required when legacy zoom options are used instead of explicit metrics. */
+    geodeticSystem?: GeodeticSystem;
     id?: string;
     urlTemplates: string | readonly string[];
     metrics?: ITileMetrics;
@@ -176,15 +179,21 @@ export function createWebMapImplicitSource(options: IWebMapImplicitSourceOptions
     const legacyMaxLOD = options.maximumZoom;
     const metrics =
         options.metrics ??
-        new WebMercatorTileMetrics({
-            minLOD: legacyMinLOD,
-            maxLOD:
-                legacyMaxLOD ??
+        new WebMercatorTileMetrics(
+            {
+                minLOD: legacyMinLOD,
+                maxLOD:
+                    legacyMaxLOD ??
+                    (() => {
+                        throw new RangeError("A Web Map source requires metrics or maximumZoom.");
+                    })(),
+                ...(options.tileSize !== undefined ? { tileSize: options.tileSize } : {}),
+            },
+            options.geodeticSystem ??
                 (() => {
-                    throw new RangeError("A Web Map source requires metrics or maximumZoom.");
+                    throw new RangeError("A source requires an explicit geodetic system or metrics.");
                 })(),
-            ...(options.tileSize !== undefined ? { tileSize: options.tileSize } : {}),
-        });
+        );
     if (options.maximumZoom !== undefined && options.maximumZoom !== metrics.maxLOD)
         throw new RangeError("maximumZoom conflicts with metrics.maxLOD. Metrics are authoritative.");
     if (options.tileSize !== undefined && options.tileSize !== metrics.tileSize)

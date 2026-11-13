@@ -1,5 +1,6 @@
 import type { IBoundingVolume, IContent, IMetadataSchema, ITile } from "@spacexr/3d-tiles-core";
 
+import type { ITileTopology } from "@spacexr/tiles";
 import { LoadedSubtreeAvailability } from "../implicit/availability";
 import {
     computeImplicitTile,
@@ -33,8 +34,8 @@ import {
 } from "../pipeline/states";
 import { Tile3D, Tile3DContent } from "../pipeline/tile-3d";
 import type {
-    IContentLoadContext,
     ContentLoadResult,
+    IContentLoadContext,
     IContentPresentationContext,
     IGlyphPublicationContext,
     ILoadedTileset,
@@ -57,10 +58,10 @@ import { resolveRuntimeCacheOptions } from "./cache";
 import type { IRuntimeContent, IRuntimeFrameResult, IRuntimeTile, IRuntimeTilesetDocument, ITileContext } from "./contracts";
 import { RuntimeEventHub } from "./events";
 import type {
-    IContentHookContext,
-    ICacheEvictionHookContext,
-    IFrameHookContext,
     HookResult,
+    ICacheEvictionHookContext,
+    IContentHookContext,
+    IFrameHookContext,
     IMetadataHookContext,
     IRuntimeErrorHookContext,
     IRuntimeHooks,
@@ -73,16 +74,15 @@ import type { IRuntimeInstrumentationOptions, IRuntimeStateStatistics } from "./
 import { RuntimeInstrumentation } from "./instrumentation";
 import { PriorityScheduler } from "./priority-scheduler";
 import {
-    refineQuadtreeCut,
     quadtreeBalanceRefinements,
     quadtreeImbalances,
     quadtreeTileKey,
     quadtreeTouches,
+    refineQuadtreeCut,
     type IQuadtreeCutTile,
     type IQuadtreeImbalance,
     type IQuadtreeTileLocation,
 } from "./quadtree-balance";
-import type { ITileTopology } from "@spacexr/tiles";
 
 export interface ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHandle> {
     id: string;
@@ -170,7 +170,7 @@ const BALANCE_LOAD_PRIORITY = Number.MAX_SAFE_INTEGER;
 export interface IQuadtreeBalanceOptions {
     /** Wraps columns around the antimeridian for addresses from `IImplicitTileResolver.addressOf`. Defaults to false. */
     wrapX?: boolean;
-    /** How addresses from `IImplicitTileResolver.addressOf` connect, for example across cube faces, in place of `wrapX`. */
+    /** How addresses from `IImplicitTileResolver.addressOf` connect, for example across configured local frames, in place of `wrapX`. */
     topology?: ITileTopology;
     /**
      * A tile the balance must refine, whose children are not ready, keeps its displayed descendants only when they cover

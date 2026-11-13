@@ -1,6 +1,6 @@
+import { describe, expect, it } from "vitest";
 import type { ISubtree } from "../src";
 import { SubtreeCodec, SubtreeCodecError } from "../src";
-import { describe, expect, it } from "vitest";
 
 const subtree: ISubtree = {
     buffers: [{ byteLength: 1 }],

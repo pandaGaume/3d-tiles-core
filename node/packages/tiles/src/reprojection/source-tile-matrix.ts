@@ -4,7 +4,7 @@ import type { IMapPosition } from "./source-projection";
 
 /**
  * One level of the tiles of a raster source. The pixel size is explicit: it cannot always be read from a WMTS
- * `ScaleDenominator`, and the matrix may be larger than the map: a Moon Trek polar matrix of 2 x 1 tiles has its whole map
+ * `ScaleDenominator`, and the matrix may be larger than the map: a A provider polar matrix of 2 x 1 tiles has its whole map
  * in the first column.
  */
 export interface ISourceTileMatrix {
@@ -67,7 +67,7 @@ export function sourcePixelAt(matrix: ISourceTileMatrix, pixelX: number, pixelY:
 }
 
 /** The tile matrix of a level of an XYZ Web Mercator pyramid, EPSG:3857: rows from the north, 2^level tiles per side. */
-export function webMercatorTileMatrix(level: number, tileSize = 256, semiMajorAxis = 6378137): ISourceTileMatrix {
+export function webMercatorTileMatrix(level: number, tileSize = 256, semiMajorAxis: number): ISourceTileMatrix {
     const half = Math.PI * semiMajorAxis;
     const tiles = 2 ** level;
     return {
@@ -83,7 +83,7 @@ export function webMercatorTileMatrix(level: number, tileSize = 256, semiMajorAx
     };
 }
 
-/** The tile matrix of a level of a global geographic pyramid, such as Moon Trek: 2 x 1 tiles at level 0, from -180 and 90. */
+/** The tile matrix of a level of a global geographic pyramid, such as A provider: 2 x 1 tiles at level 0, from -180 and 90. */
 export function geographicTileMatrix(level: number, tileSize = 256): ISourceTileMatrix {
     const tiles = 2 ** level;
     return {

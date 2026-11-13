@@ -1,19 +1,19 @@
 import type {
     IMetadataClassProperty,
-    MetadataComponentType,
     IMetadataEntity,
     IMetadataSchema,
+    MetadataComponentType,
     MetadataValue,
 } from "@spacexr/3d-tiles-core";
 
 import type {
     IMetadataDiagnostic,
     IMetadataResolutionInput,
-    MetadataScopeKind,
-    MetadataScopeOrder,
     IMetadataSnapshot,
     IResolvedMetadataEntity,
     IResolvedMetadataProperty,
+    MetadataScopeKind,
+    MetadataScopeOrder,
 } from "./types";
 
 const VECTOR_LENGTHS: Readonly<Record<string, number>> = { VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 };

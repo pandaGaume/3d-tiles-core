@@ -1,4 +1,6 @@
+import { GeodeticSystem as FixtureGeodeticSystem } from "@spacexr/geodesy";
 import { describe, expect, it } from "vitest";
+const FIXTURE_SYSTEM = FixtureGeodeticSystem.WGS84;
 
 import type { IContentLoadContext, IRuntimeAdapter, ISpatialDerivationContext, ISpatialMetric } from "../src";
 import {
@@ -93,7 +95,12 @@ function createScenario(
     coarseningDelayMilliseconds = 0,
     clock?: () => number,
 ) {
-    const source = createWebMapImplicitSource({ urlTemplates: "grid://{z}/{x}/{y}", maximumZoom: 3, subtreeLevels: 4 });
+    const source = createWebMapImplicitSource({
+        geodeticSystem: FIXTURE_SYSTEM,
+        urlTemplates: "grid://{z}/{x}/{y}",
+        maximumZoom: 3,
+        subtreeLevels: 4,
+    });
     const adapter: IRuntimeAdapter<ICamera, ISpatial, string, never> = {
         tilesets: { load: async () => ({ tileset: source.tileset }) },
         subtrees: new DenseImplicitSubtreeLoader(),

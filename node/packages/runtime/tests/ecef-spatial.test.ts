@@ -1,13 +1,14 @@
 import type { ITile } from "@spacexr/3d-tiles-core";
-import { Ellipsoid, GeodeticSystem } from "@spacexr/geodesy";
+import { Ellipsoid, GeodeticSystem as FixtureGeodeticSystem, GeodeticSystem } from "@spacexr/geodesy";
 import { beforeEach, describe, expect, it } from "vitest";
+const FIXTURE_SYSTEM = FixtureGeodeticSystem.WGS84;
 
 import { EcefSpatialMetric } from "../src";
 
 describe("EcefSpatialMetric", () => {
     describe("horizon from the heights of a tile", () => {
         const radius = 1738100;
-        const geodeticSystem = new GeodeticSystem(Ellipsoid.sphere("Moon", radius));
+        const geodeticSystem = new GeodeticSystem(Ellipsoid.sphere("fixture sphere", radius));
         const camera = { position: { x: radius + 50, y: 0, z: 0 }, viewportHeight: 1080 };
         let heights = new EcefSpatialMetric({ geodeticSystem, horizon: "tile-heights" });
         beforeEach(() => {
@@ -71,7 +72,7 @@ describe("EcefSpatialMetric", () => {
     });
 
     it("derives transformed bounds and transform-scaled geometric error", () => {
-        const metric = new EcefSpatialMetric({ horizonCulling: false });
+        const metric = new EcefSpatialMetric({ geodeticSystem: FIXTURE_SYSTEM, horizonCulling: false });
         const tile: ITile = {
             boundingVolume: { sphere: [1, 2, 3, 4] },
             geometricError: 5,
@@ -86,7 +87,7 @@ describe("EcefSpatialMetric", () => {
     });
 
     it("computes screen-space error and applies clip bounds", () => {
-        const metric = new EcefSpatialMetric({ horizonCulling: false });
+        const metric = new EcefSpatialMetric({ geodeticSystem: FIXTURE_SYSTEM, horizonCulling: false });
         const tile: ITile = { boundingVolume: { sphere: [0, 0, 0, 1] }, geometricError: 2 };
         const spatial = metric.derive({ tile });
         const camera = {
@@ -107,7 +108,7 @@ describe("EcefSpatialMetric", () => {
     });
 
     it("derives region bounds with the injected geodetic system", () => {
-        const mars = Ellipsoid.fromAxes("Mars", 3_396_190, 3_376_200);
+        const mars = Ellipsoid.fromAxes("synthetic ellipsoid", 3_396_190, 3_376_200);
         const system = new GeodeticSystem(mars);
         const metric = new EcefSpatialMetric({ geodeticSystem: system, horizonCulling: false });
         const tile: ITile = {

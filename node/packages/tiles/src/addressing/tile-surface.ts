@@ -48,8 +48,10 @@ export interface ITileSurface {
  * one level and row are the same shape turned about the polar axis.
  */
 export class WebMercatorTileSurface implements ITileSurface {
-    /** @param system - Geodetic system of the ellipsoid. Defaults to WGS84. */
-    public constructor(private readonly system: GeodeticSystem = GeodeticSystem.WGS84) {}
+    /** @param system - Geodetic system of the ellipsoid. Supplied explicitly by the caller. */
+    public constructor(private readonly system: GeodeticSystem) {
+        if (!system) throw new TypeError("An explicit geodetic system is required.");
+    }
 
     public point(address: ITileAddress, s: number, t: number, height = 0, target: ICartesian3 = { x: 0, y: 0, z: 0 }): ICartesian3 {
         this.assertAddress(address);

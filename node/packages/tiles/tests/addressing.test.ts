@@ -1,4 +1,6 @@
+import { GeodeticSystem as FixtureGeodeticSystem } from "@spacexr/geodesy";
 import { describe, expect, it } from "vitest";
+const FIXTURE_SYSTEM = FixtureGeodeticSystem.WGS84;
 
 import { WebMercatorTileMetrics, ancestorTileAddress, childTileAddresses, isValidTileAddress, parentTileAddress, quadkeyToTileAddress, tileAddressToQuadkey, toTmsY } from "../src";
 
@@ -49,14 +51,14 @@ describe("tile addressing", () => {
 
 describe("WebMercatorTileMetrics", () => {
     it("keeps the east and south map edges inside the pyramid", () => {
-        const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 15 });
+        const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 15 }, FIXTURE_SYSTEM);
         expect(metrics.getLatLonToTileXY(0, 180, 3)).toEqual({ x: 7, y: 4 });
         expect(metrics.getLatLonToTileXY(-90, -180, 3)).toEqual({ x: 0, y: 7 });
         expect(metrics.getLatLonToTileXY(85.0511287798066, -180, 3)).toEqual({ x: 0, y: 0 });
     });
 
     it("round trips tile corners", () => {
-        const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 20 });
+        const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 20 }, FIXTURE_SYSTEM);
         const corner = metrics.getTileXYToLatLon(9634, 11218, 15);
         expect(metrics.getLatLonToTileXY(corner.latitude - 1e-9, corner.longitude + 1e-9, 15)).toEqual({ x: 9634, y: 11218 });
     });

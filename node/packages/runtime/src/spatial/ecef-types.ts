@@ -85,8 +85,8 @@ export interface IEcefSpatialState {
 
 /** Configuration for the renderer-neutral ECEF spatial metric. */
 export interface IEcefSpatialMetricOptions {
-    /** Geodetic reference system used by region volumes and horizon culling. Defaults to WGS84. */
-    geodeticSystem?: GeodeticSystem;
+    /** Geodetic reference system used by region volumes and horizon culling. Supplied explicitly by the caller. */
+    geodeticSystem: GeodeticSystem;
     /** Enables conservative ellipsoid horizon culling. Defaults to `true`. */
     horizonCulling?: boolean;
     /**

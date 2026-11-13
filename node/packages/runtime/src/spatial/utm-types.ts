@@ -1,5 +1,5 @@
 import type { IUtmProjection } from "@spacexr/3d-tiles-core";
-import type { IGeodeticCoordinates } from "@spacexr/geodesy";
+import type { Ellipsoid, IGeodeticCoordinates } from "@spacexr/geodesy";
 
 /**
  * Horizontal datum transformation from the datum of a UTM extent to the geodetic system of the spatial metric.
@@ -12,6 +12,8 @@ export interface IHorizontalDatumTransformation {
      * Derived bounds are widened by this distance so that the true position stays inside them.
      */
     readonly accuracy: number;
+    /** Source CRS ellipsoid; defaults to the supplied target system ellipsoid. */
+    readonly sourceEllipsoid?: Ellipsoid;
     /**
      * Transforms geodetic coordinates in radians, in place, from the source datum to the target system.
      * Omitted for a null transformation, whose whole error is covered by `accuracy`.
@@ -33,9 +35,13 @@ export type GeoidUndulationModel = (latitudeRadians: number, longitudeRadians: n
 
 /** Options controlling how UTM extents are placed in ECEF. */
 export interface IUtmPlacementOptions {
-    /** Datum transformation resolver. Defaults to {@link defaultHorizontalDatumResolver}, which targets WGS 84. */
+    /** Datum transformation resolver. Without a resolver, the datum remains unresolved. */
     datumResolver?: HorizontalDatumResolver;
-    /** Geoid model for orthometric heights. Without it, {@link GEOID_UNDULATION_MARGIN} is applied. */
+    /** Explicit vertical uncertainty in metres when no geoid model is supplied. */
+    geoidUndulationMargin?: number;
+    /** Explicit height envelope when the vertical origin is unknown. */
+    unknownGroundHeightRange?: readonly [number, number];
+    /** Geoid model for orthometric heights. Without it, an explicit geoidUndulationMargin is required. */
     geoidUndulation?: GeoidUndulationModel;
 }
 
@@ -54,7 +60,7 @@ export type UtmPlacementStatus = "placed" | "unresolved-projection" | "unresolve
  * - `ellipsoid`: values were already ellipsoidal heights.
  * - `geoid`: values were orthometric heights.
  * - `ground-elevation`: values were measured from `groundElevation`, treated as an orthometric height.
- * - `assumed-terrain`: the vertical origin is unknown, so {@link UNKNOWN_GROUND_HEIGHT_RANGE} was assumed.
+ * - `assumed-terrain`: the vertical origin is unknown, so the caller supplied a height envelope.
  */
 export type UtmVerticalOrigin = "ellipsoid" | "geoid" | "ground-elevation" | "assumed-terrain";
 

@@ -27,7 +27,7 @@ export class TileUrlTemplateError extends Error {
  * - `{y}`: XYZ row, growing southward.
  * - `{-y}`: TMS row, growing northward.
  * - `{quadkey}`: Bing Maps quadkey, within the face.
- * - `{face}`: face of the cube index, 0 for single-root pyramids.
+ * - `{face}`: face of a multi-root pyramid, 0 for single-root pyramids.
  * - `{s}`: subdomain, chosen as `subdomains[(x + y) % subdomains.length]` so a tile always maps to the same host.
  */
 export const BUILT_IN_TILE_URL_VARIABLES: readonly string[] = ["z", "lod", "level", "x", "y", "-y", "quadkey", "face", "s"];

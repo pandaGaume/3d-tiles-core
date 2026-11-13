@@ -1,6 +1,8 @@
 import type { ITile, ITileset } from "@spacexr/3d-tiles-core";
+import { GeodeticSystem as FixtureGeodeticSystem } from "@spacexr/geodesy";
 import { childTileAddresses } from "@spacexr/tiles";
 import { describe, expect, it } from "vitest";
+const FIXTURE_SYSTEM = FixtureGeodeticSystem.WGS84;
 
 import type { IContentLoadContext, IRuntimeAdapter, ISpatialDerivationContext, ISpatialMetric } from "../src";
 import { DenseImplicitSubtreeLoader, TileRuntime, createWebMapImplicitSource, quadtreeImbalances, refineQuadtreeCut } from "../src";
@@ -255,7 +257,12 @@ describe("TileRuntime base selection", () => {
 });
 
 function implicitRuntime(delayed?: (address: { lod: number; x: number; y: number }) => Promise<void> | undefined) {
-    const source = createWebMapImplicitSource({ urlTemplates: "grid://{z}/{x}/{y}", maximumZoom: 4, subtreeLevels: 5 });
+    const source = createWebMapImplicitSource({
+        geodeticSystem: FIXTURE_SYSTEM,
+        urlTemplates: "grid://{z}/{x}/{y}",
+        maximumZoom: 4,
+        subtreeLevels: 5,
+    });
     const adapter: IRuntimeAdapter<ICamera, ISpatial, string, never> = {
         tilesets: { load: async () => ({ tileset: source.tileset }) },
         subtrees: new DenseImplicitSubtreeLoader(),

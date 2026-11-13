@@ -1,4 +1,4 @@
-import type { NonEmptyArray, IRootProperty } from "./common";
+import type { IRootProperty, NonEmptyArray } from "./common";
 
 export type MetadataType = "SCALAR" | "VEC2" | "VEC3" | "VEC4" | "MAT2" | "MAT3" | "MAT4" | "STRING" | "BOOLEAN" | "ENUM";
 

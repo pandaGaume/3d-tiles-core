@@ -1,7 +1,7 @@
 import type { IBoundingVolume, IContent, ITile } from "@spacexr/3d-tiles-core";
 
 import type { IRuntimeImplicitTile } from "../implicit/types";
-import type { IRuntimeFeatureMetadata, IMetadataSnapshot } from "../metadata/types";
+import type { IMetadataSnapshot, IRuntimeFeatureMetadata } from "../metadata/types";
 import type { IRuntimeResourceCost } from "../runtime/cache";
 import type { IRuntimeTilesetDocument } from "../runtime/contracts";
 import {

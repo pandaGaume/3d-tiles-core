@@ -1,4 +1,6 @@
+import { GeodeticSystem as FixtureGeodeticSystem } from "@spacexr/geodesy";
 import { describe, expect, it } from "vitest";
+const FIXTURE_SYSTEM = FixtureGeodeticSystem.WGS84;
 
 import {
     TileHttpClient,
@@ -126,7 +128,7 @@ describe("TileHttpClient", () => {
 
 describe("WebTileSource", () => {
     it("serves only its levels and validates its template at construction", () => {
-        const metrics = new WebMercatorTileMetrics({ minLOD: 2, maxLOD: 4 });
+        const metrics = new WebMercatorTileMetrics({ minLOD: 2, maxLOD: 4 }, FIXTURE_SYSTEM);
         const source = new WebTileSource({
             registration: "area",
             urlTemplate: "https://{s}.t/{quadkey}",
@@ -142,7 +144,11 @@ describe("WebTileSource", () => {
     });
 
     it.each([undefined, "pixel"])("rejects the registration %s", (registration) => {
-        const options = { urlTemplate: "https://t/{z}/{x}/{y}", metrics: new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 4 }), client: { fetch: scriptedFetch([]).fetch } };
+        const options = {
+            urlTemplate: "https://t/{z}/{x}/{y}",
+            metrics: new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 4 }, FIXTURE_SYSTEM),
+            client: { fetch: scriptedFetch([]).fetch },
+        };
         expect(() => new WebTileSource({ ...options, registration: registration as never })).toThrow(TypeError);
         expect(new WebTileSource({ ...options, registration: "point" }).registration).toBe("point");
     });

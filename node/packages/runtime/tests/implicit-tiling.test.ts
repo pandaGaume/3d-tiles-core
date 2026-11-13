@@ -1,6 +1,8 @@
 import type { IImplicitTiling, ISubtree, ITileset } from "@spacexr/3d-tiles-core";
 import { SubtreeCodec } from "@spacexr/3d-tiles-core";
+import { GeodeticSystem as FixtureGeodeticSystem } from "@spacexr/geodesy";
 import { describe, expect, it } from "vitest";
+const FIXTURE_SYSTEM = FixtureGeodeticSystem.WGS84;
 
 import type {
     IContentLoadContext,
@@ -230,6 +232,7 @@ describe("TileRuntime implicit traversal", () => {
 
     it("adapts an XYZ Web Mercator DEM pyramid and exposes coordinates to the terrain adapter", async () => {
         const source = createWebMapImplicitSource({
+            geodeticSystem: FIXTURE_SYSTEM,
             urlTemplates: "https://dem.example.test/{z}/{x}/{y}.png",
             maximumZoom: 1,
             subtreeLevels: 2,
@@ -272,6 +275,7 @@ describe("TileRuntime implicit traversal", () => {
 
     it("re-resolves child bounds from parent content, except for children with measured content bounds", async () => {
         const source = createWebMapImplicitSource({
+            geodeticSystem: FIXTURE_SYSTEM,
             urlTemplates: "https://dem.example.test/{z}/{x}/{y}.png",
             maximumZoom: 1,
             subtreeLevels: 2,
@@ -363,6 +367,7 @@ describe("TileRuntime implicit traversal", () => {
 
     it("releases inactive implicit branches and subtrees, then materializes them again", async () => {
         const source = createWebMapImplicitSource({
+            geodeticSystem: FIXTURE_SYSTEM,
             urlTemplates: "https://dem.example.test/{z}/{x}/{y}.png",
             maximumZoom: 2,
             subtreeLevels: 1,

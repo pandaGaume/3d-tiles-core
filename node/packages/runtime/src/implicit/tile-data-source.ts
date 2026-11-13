@@ -1,16 +1,16 @@
 import type { IBoundingVolume, IContent, IMetadataEntity, ITileset } from "@spacexr/3d-tiles-core";
 
+import type { ITileMetrics } from "./metrics";
 import type {
     IImplicitCoordinates,
     IImplicitTileAddressContext,
+    IImplicitTileOverride,
     IImplicitTileResolveContext,
     IImplicitTileResolver,
-    IImplicitTileOverride,
 } from "./types";
-import type { ITileMetrics } from "./metrics";
 
 export interface ITileAddress {
-    /** Root of the address on a pyramid of several roots, such as the cube index; omitted for face 0. */
+    /** Root of the address on a pyramid of several roots, such as a multi-root pyramid; omitted for face 0. */
     face?: number;
     lod: number;
     x: number;

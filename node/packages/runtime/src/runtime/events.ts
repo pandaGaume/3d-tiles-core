@@ -1,7 +1,7 @@
-import type { IMetadataSnapshot } from "../metadata/types";
 import type { IRuntimeImplicitSubtree } from "../implicit/types";
-import type { IRuntimeContent, IRuntimeFrameResult, IRuntimeQuadtreeImbalance, IRuntimeTile, IRuntimeTilesetDocument } from "./contracts";
+import type { IMetadataSnapshot } from "../metadata/types";
 import type { IRuntimeCacheEviction } from "./cache";
+import type { IRuntimeContent, IRuntimeFrameResult, IRuntimeQuadtreeImbalance, IRuntimeTile, IRuntimeTilesetDocument } from "./contracts";
 
 export type RuntimeEvent<TSpatial, TContentHandle, TGlyphHandle> =
     | { type: "tileset-ready"; document: IRuntimeTilesetDocument }

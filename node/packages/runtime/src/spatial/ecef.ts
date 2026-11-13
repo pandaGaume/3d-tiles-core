@@ -1,5 +1,5 @@
 import { getUtmBoundingVolume } from "@spacexr/3d-tiles-core";
-import { GeodeticSystem } from "@spacexr/geodesy";
+import type { GeodeticSystem } from "@spacexr/geodesy";
 
 import type { IScreenSpaceErrorContext, ISpatialDerivationContext, ISpatialMetric } from "../ports/spatial";
 import {
@@ -12,10 +12,10 @@ import {
     sphereOutsidePlane,
 } from "./bounding-volumes";
 import type { IEcefCameraFrame, IEcefSpatialMetricOptions, IEcefSpatialState } from "./ecef-types";
-import { placeVertically, type IVerticalPlacement } from "./vertical-scale";
+import { matrixOf, maximumScale, multiplyTransforms, vectorLength } from "./matrix";
 import { boundsFromUtm } from "./utm-bounds";
 import type { IUtmPlacementOptions } from "./utm-types";
-import { matrixOf, maximumScale, multiplyTransforms, vectorLength } from "./matrix";
+import { placeVertically, type IVerticalPlacement } from "./vertical-scale";
 
 const DEFAULT_VIEWPORT_HEIGHT = 1080;
 const DEFAULT_VERTICAL_FOV_RADIANS = Math.PI / 3;
@@ -44,8 +44,9 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
      *
      * @param options - Geodetic system and camera fallbacks.
      */
-    public constructor(options: IEcefSpatialMetricOptions = {}) {
-        this.system = options.geodeticSystem ?? GeodeticSystem.WGS84;
+    public constructor(options: IEcefSpatialMetricOptions) {
+        if (!options?.geodeticSystem) throw new TypeError("An explicit geodetic system is required.");
+        this.system = options.geodeticSystem;
         this.horizonCulling = options.horizonCulling ?? true;
         this.horizon = options.horizon ?? "plane";
         this.defaultViewportHeight = options.defaultViewportHeight ?? DEFAULT_VIEWPORT_HEIGHT;

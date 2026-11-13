@@ -5,7 +5,7 @@
  * Slippy Map, Google and Bing tiles. Use {@link toTmsY} for TMS sources, whose
  * `y` grows northward.
  *
- * A pyramid with several roots, such as the cube index of a celestial body, has one quadtree per root, selected by
+ * A pyramid with several roots, such as a multi-root pyramid of a celestial body, has one quadtree per root, selected by
  * `face`. Single-root pyramids, such as Web Mercator, omit it, which means face 0.
  */
 export interface ITileAddress {
@@ -17,7 +17,7 @@ export interface ITileAddress {
     y: number;
 }
 
-/** Highest root of a tile address: the six faces of the cube index are 0 to 5. */
+/** Highest root of a tile address: the six faces of a multi-root pyramid are 0 to 5. */
 export const MAX_TILE_FACE = 5;
 
 /** Copies the face of `source` onto a new address, leaving it out when `source` has none. */

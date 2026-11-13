@@ -48,7 +48,7 @@ export interface IVerticalFrame {
     up(point: Readonly<IVector3>): IVector3;
 }
 
-/** Radial heights over a reference surface, as on the cube index: `P = (r_ref(d) + h) d`. */
+/** Radial heights over a reference surface, as within the pyramid root: `P = (r_ref(d) + h) d`. */
 export function radialVerticalFrame(reference: Pick<ReferenceSurface, "height">): IVerticalFrame {
     return {
         height: (point) => reference.height(point),

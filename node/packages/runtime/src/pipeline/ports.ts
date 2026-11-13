@@ -1,8 +1,8 @@
 import type { ContentLoadResult } from "../ports/content";
 import type { IRuntimeContent } from "../runtime/contracts";
-import type { Tile3D } from "./tile-3d";
 import type { IMetadataStore } from "./metadata-store";
 import type { MetadataHandle } from "./states";
+import type { Tile3D } from "./tile-3d";
 
 export interface ITileReadinessPort<TRenderHandle> {
     readonly tileId: string;

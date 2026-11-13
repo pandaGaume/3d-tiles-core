@@ -54,8 +54,7 @@ export interface ITileNeighborOptions {
 
 /**
  * Returns the neighbour at the same level of detail, or `undefined` beyond the pyramid. Rows never wrap: there is no
- * tile north of the first row or south of the last one. The face is kept; neighbours across the faces of the cube
- * index are given by `cubeTileNeighbor`.
+ * tile north of the first row or south of the last one. The face is kept; neighbours across root boundaries are given by the supplied topology.
  */
 export function tileNeighborAddress(address: ITileAddress, neighbor: TileNeighbor, options: ITileNeighborOptions = {}): ITileAddress | undefined {
     const [dx, dy] = tileNeighborOffset(neighbor);

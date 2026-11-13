@@ -79,8 +79,9 @@ export class WebMercatorTileMetrics implements ITileMetrics {
 
     public constructor(
         options: IWebMercatorTileMetricsOptions,
-        private readonly geodeticSystem = GeodeticSystem.WGS84
+        public readonly geodeticSystem: GeodeticSystem
     ) {
+        if (!geodeticSystem) throw new TypeError("An explicit geodetic system is required.");
         if (!Number.isInteger(options.minLOD) || !Number.isInteger(options.maxLOD) || options.minLOD < 0 || options.maxLOD < options.minLOD)
             throw new RangeError("Tile metrics require integer LOD bounds with 0 <= minLOD <= maxLOD.");
         const tileSize = options.tileSize ?? 256;

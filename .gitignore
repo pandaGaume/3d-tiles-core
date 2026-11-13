@@ -53,3 +53,6 @@ Thumbs.db
 # AI tooling
 .claude/
 
+
+# Reversible local repository-move backup
+.framework-recomposition-backup/

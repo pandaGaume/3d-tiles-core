@@ -1,5 +1,7 @@
 import type { ITileset } from "@spacexr/3d-tiles-core";
+import { GeodeticSystem as FixtureGeodeticSystem } from "@spacexr/geodesy";
 import { describe, expect, it } from "vitest";
+const FIXTURE_SYSTEM = FixtureGeodeticSystem.WGS84;
 
 import {
     CameraChangeFlags,
@@ -180,7 +182,12 @@ describe("TileRuntime queued priorities", () => {
 
 describe("TileRuntime implicit materialization", () => {
     function createImplicit(maxMaterializedTiles: number, satisfiedDepth = 3) {
-        const source = createWebMapImplicitSource({ urlTemplates: "grid://{z}/{x}/{y}", maximumZoom: 8, subtreeLevels: 4 });
+        const source = createWebMapImplicitSource({
+            geodeticSystem: FIXTURE_SYSTEM,
+            urlTemplates: "grid://{z}/{x}/{y}",
+            maximumZoom: 8,
+            subtreeLevels: 4,
+        });
         const adapter: IRuntimeAdapter<ICamera, object, string, never> = {
             tilesets: { load: async () => ({ tileset: source.tileset }) },
             subtrees: new DenseImplicitSubtreeLoader(),

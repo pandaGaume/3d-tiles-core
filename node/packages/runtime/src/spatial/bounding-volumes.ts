@@ -1,5 +1,5 @@
-import type { GeodeticSystem } from "@spacexr/geodesy";
 import type { Box, Region, Sphere } from "@spacexr/3d-tiles-core";
+import type { GeodeticSystem } from "@spacexr/geodesy";
 
 import type { IAxisAlignedBox, IBoundingSphere3, IEcefSpatialState, IVector3 } from "./ecef-types";
 import { maximumScale, transformPoint, transformVector, vectorLength } from "./matrix";

@@ -1,4 +1,4 @@
-import type { RuntimeMetricName, IRuntimeMetric } from "../ports";
+import type { IRuntimeMetric, RuntimeMetricName } from "../ports";
 import type { IResolvedRuntimeCacheOptions, IRuntimeCacheCounters } from "./cache";
 
 export interface IRuntimeInstrumentationOptions {

@@ -10,7 +10,9 @@
         "node": ">=20.11.0"
     },
     "workspaces": [
-        "packages/*"
+        "packages/core",
+        "packages/tiles",
+        "packages/runtime"
     ],
     "overrides": {
         "esbuild": "0.28.2"

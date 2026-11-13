@@ -4,7 +4,7 @@ import { TileNeighbor, tileNeighborAddress } from "./tile-neighbors";
 /** Neighbour of a tile, with the quarter turns from the frame of the tile to the frame of the neighbour. */
 export interface ITileTopologyNeighbor {
     readonly address: ITileAddress;
-    /** 0 when both tiles share a frame; on the cube index, 1 to 3 across some face edges. */
+    /** 0 when both tiles share a frame; within the pyramid root, 1 to 3 across some face edges. */
     readonly turns: number;
 }
 

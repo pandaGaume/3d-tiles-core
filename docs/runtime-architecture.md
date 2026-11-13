@@ -242,7 +242,7 @@ The generic runtime owns traversal, availability and resource lifecycle. Web til
 
 ## Cube tilesets
 
-The runtime source of a whole body on the [cube index](celestial-tiling.md), `createCubeImplicitSource`, is on the `experimental/cube` branch until it is validated. The cube addressing, its topology and the reprojection of `@spacexr/tiles` stay here.
+The runtime source of a whole body on the [cube index](../../spacexr-rendering/docs/architecture.md), `createCubeImplicitSource`, is on the `experimental/cube` branch until it is validated. The cube addressing, its topology and the reprojection of `@spacexr/tiles` stay here.
 
 ## Base selection for runtime owned geometry
 

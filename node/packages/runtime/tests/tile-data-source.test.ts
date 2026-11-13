@@ -1,14 +1,19 @@
+import { GeodeticSystem as FixtureGeodeticSystem } from "@spacexr/geodesy";
 import { describe, expect, it } from "vitest";
+const FIXTURE_SYSTEM = FixtureGeodeticSystem.WGS84;
 
 import { ImplicitTilesetDecorator, WebMapTileDataSource, WebMercatorTileMetrics } from "../src/implicit";
 
 describe("tile data source metrics", () => {
     it("makes the source authoritative for LOD range, addressing and URLs", () => {
-        const metrics = new WebMercatorTileMetrics({
-            minLOD: 3,
-            maxLOD: 12,
-            tileSize: 256,
-        });
+        const metrics = new WebMercatorTileMetrics(
+            {
+                minLOD: 3,
+                maxLOD: 12,
+                tileSize: 256,
+            },
+            FIXTURE_SYSTEM,
+        );
         const dataSource = new WebMapTileDataSource({
             id: "terrain",
             metrics,
@@ -42,7 +47,7 @@ describe("tile data source metrics", () => {
     });
 
     it("rejects an implicit root that disagrees with metrics.minLOD", () => {
-        const metrics = new WebMercatorTileMetrics({ minLOD: 3, maxLOD: 12 });
+        const metrics = new WebMercatorTileMetrics({ minLOD: 3, maxLOD: 12 }, FIXTURE_SYSTEM);
 
         expect(
             () =>
@@ -55,7 +60,7 @@ describe("tile data source metrics", () => {
     });
 
     it("expands subdomain, quadkey, TMS and application variables", () => {
-        const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 5 });
+        const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 5 }, FIXTURE_SYSTEM);
         const dataSource = new WebMapTileDataSource({
             metrics,
             urlTemplates: ["https://{s}.imagery.test/{quadkey}.jpeg", "https://dem.test/{z}/{x}/{-y}.png?key={apiKey}"],
@@ -68,14 +73,14 @@ describe("tile data source metrics", () => {
     });
 
     it("keeps {y} in the declared TMS convention", () => {
-        const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 5 });
+        const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 5 }, FIXTURE_SYSTEM);
         const dataSource = new WebMapTileDataSource({ metrics, scheme: "TMS", urlTemplates: "https://tms.test/{z}/{x}/{y}/{quadkey}" });
         expect(dataSource.addressOf({ level: 3, x: 3, y: 2 })).toEqual({ lod: 3, x: 3, y: 2 });
         expect(dataSource.resolve({ level: 3, x: 3, y: 2 }).contents[0]?.uri).toBe("https://tms.test/3/3/2/213");
     });
 
     it("rejects templates with unknown variables at construction", () => {
-        const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 5 });
+        const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 5 }, FIXTURE_SYSTEM);
         expect(() => new WebMapTileDataSource({ metrics, urlTemplates: "https://t/{zoom}/{x}/{y}" })).toThrow(/unknown variable \{zoom\}/);
     });
 });

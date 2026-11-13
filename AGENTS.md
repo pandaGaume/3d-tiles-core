@@ -11,7 +11,9 @@ Read this file before modifying the repository.
 
 ## Current scope
 
-The core package contains serializable 3D Tiles interfaces, JSON codecs and structural validation. The runtime package contains renderer-neutral traversal and mutable streaming state behind explicit ports. The tiles package contains content-neutral tile addressing, neighbours, pyramids and HTTP sources. The raster package contains tile rasters of any meaning, imagery and elevation alike, and the dem package elevation models built on rasters. The grid package contains renderer-neutral terrain grid topologies built on the tile definitions of the tiles package.
+The core package contains serializable 3D Tiles interfaces, JSON codecs and structural validation. The runtime package contains renderer-neutral traversal and mutable streaming state behind explicit ports. The tiles package contains content-neutral tile addressing, neighbours, pyramids and HTTP sources.
+
+Raster, DEM and grid packages now live in the sibling `terrain-core/packages/` workspace. Babylon integration, shader tools and examples live in `spacexr-rendering`. Preserve one shared runtime; do not copy the moved implementations back here. Package names and imports remain unchanged. Use the multi-repository framework workspace for integration work.
 
 Keep these layers separate:
 
@@ -45,3 +47,7 @@ npm run check
 ## Release
 
 The Node package uses `node-v*` tags. Publication is performed by the GitHub Actions release workflow with npm trusted publishing.
+
+## Body-neutral framework
+
+Cube implementations, body-specific production tools and provider presets do not belong to the active generic packages. Physical surface and geodetic parameters are explicit inputs, supplied by an application or a body composition using spacexr-celestial. Body-specific constants are permitted in demonstration fixtures. Earth/Babylon/atmosphere composition belongs in the optional future babylon-earth package; do not create empty future packages.

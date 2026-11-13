@@ -1,7 +1,7 @@
 import { SubtreeCodec } from "@spacexr/3d-tiles-core";
 
-import { StandardUriResolver } from "../ports/resource";
 import type { IRuntimeUriResolver } from "../ports/resource";
+import { StandardUriResolver } from "../ports/resource";
 import type { IImplicitSubtreeLoader, IImplicitSubtreeLoadRequest, ILoadedImplicitSubtree } from "./types";
 
 export interface IByteResourceLoadRequest {

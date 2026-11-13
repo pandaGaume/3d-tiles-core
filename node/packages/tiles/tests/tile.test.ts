@@ -1,8 +1,10 @@
+import { GeodeticSystem as FixtureGeodeticSystem } from "@spacexr/geodesy";
 import { describe, expect, it } from "vitest";
+const FIXTURE_SYSTEM = FixtureGeodeticSystem.WGS84;
 
 import { Tile, WebMercatorTileMetrics } from "../src";
 
-const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 15 });
+const metrics = new WebMercatorTileMetrics({ minLOD: 0, maxLOD: 15 }, FIXTURE_SYSTEM);
 
 describe("Tile", () => {
     it("derives its quadkey, key and bounds from the metrics", () => {

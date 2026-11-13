@@ -1,5 +1,5 @@
-import type { NonEmptyArray, IRootProperty } from "./common";
-import type { MetadataComponentType, IMetadataEntity, MetadataValue } from "./metadata";
+import type { IRootProperty, NonEmptyArray } from "./common";
+import type { IMetadataEntity, MetadataComponentType, MetadataValue } from "./metadata";
 
 export interface IAvailability extends IRootProperty {
     constant?: 0 | 1;

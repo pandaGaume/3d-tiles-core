@@ -1,4 +1,6 @@
+import { GeodeticSystem as FixtureGeodeticSystem } from "@spacexr/geodesy";
 import { describe, expect, it } from "vitest";
+const FIXTURE_SYSTEM = FixtureGeodeticSystem.WGS84;
 
 import type {
     IImplicitSubtreeLoader,
@@ -34,9 +36,10 @@ const same = (left: ITileAddress, right: ITileAddress): boolean => left.lod === 
 /** A subtree source rooted at an address, with its own levels and content template. */
 function subtreeSource(root: ITileAddress, maxLOD: number) {
     return createWebMapImplicitSource({
+        geodeticSystem: FIXTURE_SYSTEM,
         id: "custom",
         urlTemplates: "custom://{z}/{x}/{y}",
-        metrics: new WebMercatorTileMetrics({ minLOD: root.lod, maxLOD }),
+        metrics: new WebMercatorTileMetrics({ minLOD: root.lod, maxLOD }, FIXTURE_SYSTEM),
         rootAddress: root,
         subtreeLevels: 2,
     });
@@ -48,8 +51,9 @@ async function selectedUris(
     graft?: { at: ITileAddress; maxLOD: number; subtrees?: IImplicitSubtreeLoader },
 ): Promise<string[]> {
     const base = createWebMapImplicitSource({
+        geodeticSystem: FIXTURE_SYSTEM,
         urlTemplates: "base://{z}/{x}/{y}",
-        metrics: new WebMercatorTileMetrics({ minLOD: 0, maxLOD }),
+        metrics: new WebMercatorTileMetrics({ minLOD: 0, maxLOD }, FIXTURE_SYSTEM),
         subtreeLevels: 2,
     });
     const custom = graft ? subtreeSource(graft.at, graft.maxLOD) : undefined;

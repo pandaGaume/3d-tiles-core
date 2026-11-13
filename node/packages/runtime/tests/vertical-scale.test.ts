@@ -16,7 +16,7 @@ import {
 
 const R = 1737400;
 const reference = ReferenceSurface.sphere(R);
-const moon = new GeodeticSystem(Ellipsoid.fromAxes("Moon", R, R));
+const fixtureSystem = new GeodeticSystem(Ellipsoid.fromAxes("fixture sphere", R, R));
 
 /** A tile on the +X axis, at a height over the reference surface, with a sphere around its origin. */
 function tileAt(height: number, radius = 100): ITile {
@@ -86,10 +86,10 @@ describe("EcefSpatialMetric with a vertical placement", () => {
     it("reads the same lowest terrain as a fresh metric, once the scale comes back", () => {
         const scale = new VerticalScale(3);
         const frame = radialVerticalFrame(reference);
-        const used = new EcefSpatialMetric({ geodeticSystem: moon, vertical: { scale, frame }, horizon: "tile-heights" });
+        const used = new EcefSpatialMetric({ geodeticSystem: fixtureSystem, vertical: { scale, frame }, horizon: "tile-heights" });
         used.derive({ tile: tileAt(0), heightRange: [-3000, 0] });
         scale.set(1);
-        const fresh = new EcefSpatialMetric({ geodeticSystem: moon, vertical: { scale, frame }, horizon: "tile-heights" });
+        const fresh = new EcefSpatialMetric({ geodeticSystem: fixtureSystem, vertical: { scale, frame }, horizon: "tile-heights" });
         fresh.derive({ tile: tileAt(0), heightRange: [-1000, 0] });
 
         const lowest = (metric: EcefSpatialMetric) => (metric as unknown as { lowestUnscaledHeight: number }).lowestUnscaledHeight;
@@ -97,15 +97,15 @@ describe("EcefSpatialMetric with a vertical placement", () => {
     });
 
     it("keeps the bounds of scale 1", () => {
-        const placed = new EcefSpatialMetric({ geodeticSystem: moon, vertical: placement(1) }).derive({ tile: tileAt(1000) });
-        const plain = new EcefSpatialMetric({ geodeticSystem: moon }).derive({ tile: tileAt(1000) });
+        const placed = new EcefSpatialMetric({ geodeticSystem: fixtureSystem, vertical: placement(1) }).derive({ tile: tileAt(1000) });
+        const plain = new EcefSpatialMetric({ geodeticSystem: fixtureSystem }).derive({ tile: tileAt(1000) });
 
         expect(placed.boundingSphere).toEqual(plain.boundingSphere);
         expect(placed.boundingBox).toEqual(plain.boundingBox);
     });
 
     it("moves an object by the height of its origin, without growing it, and leaves the transform for the children", () => {
-        const metric = new EcefSpatialMetric({ geodeticSystem: moon, vertical: placement(4) });
+        const metric = new EcefSpatialMetric({ geodeticSystem: fixtureSystem, vertical: placement(4) });
         const state = metric.derive({ tile: tileAt(1000) });
 
         expect(state.boundingSphere?.center.x).toBeCloseTo(R + 4000, 6);
@@ -116,7 +116,7 @@ describe("EcefSpatialMetric with a vertical placement", () => {
     });
 
     it("moves the parts of an object with it, whatever their transforms", () => {
-        const metric = new EcefSpatialMetric({ geodeticSystem: moon, vertical: placement(10) });
+        const metric = new EcefSpatialMetric({ geodeticSystem: fixtureSystem, vertical: placement(10) });
         const parent = metric.derive({ tile: tileAt(1000, 500) });
         // In the frame of the parent, 400 m above its origin, then a tile without a transform below it.
         // prettier-ignore
@@ -130,7 +130,7 @@ describe("EcefSpatialMetric with a vertical placement", () => {
     });
 
     it("moves the objects below a tile without a position by their own heights, inside its grown volume", () => {
-        const metric = new EcefSpatialMetric({ geodeticSystem: moon, vertical: placement(10) });
+        const metric = new EcefSpatialMetric({ geodeticSystem: fixtureSystem, vertical: placement(10) });
         const site = metric.derive({ tile: { geometricError: 1, boundingVolume: { sphere: [R + 1000, 0, 0, 500] } } });
         const object = metric.derive({ tile: tileAt(1400, 50), parent: site });
 
@@ -140,7 +140,7 @@ describe("EcefSpatialMetric with a vertical placement", () => {
     });
 
     it("anchors a tile without a position at the centre of its volume", () => {
-        const metric = new EcefSpatialMetric({ geodeticSystem: moon, vertical: placement(2) });
+        const metric = new EcefSpatialMetric({ geodeticSystem: fixtureSystem, vertical: placement(2) });
         const state = metric.derive({ tile: { geometricError: 1, boundingVolume: { sphere: [R + 1000, 0, 0, 10] } } });
 
         expect(state.boundingSphere?.center.x).toBeCloseTo(R + 2000, 6);
@@ -148,7 +148,7 @@ describe("EcefSpatialMetric with a vertical placement", () => {
     });
 
     it("only grows a volume around the centre of the body", () => {
-        const metric = new EcefSpatialMetric({ geodeticSystem: moon, vertical: placement(2) });
+        const metric = new EcefSpatialMetric({ geodeticSystem: fixtureSystem, vertical: placement(2) });
         const state = metric.derive({ tile: { geometricError: 1, boundingVolume: { sphere: [0, 0, 0, 2 * R] } } });
 
         expect(state.boundingSphere?.center).toEqual({ x: 0, y: 0, z: 0 });

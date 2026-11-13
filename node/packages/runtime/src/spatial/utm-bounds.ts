@@ -1,64 +1,23 @@
 import { resolveUtmProjection, type IUtmBoundingVolume, type IUtmProjection, type IVerticalExtent } from "@spacexr/3d-tiles-core";
-import { Ellipsoid, UtmProjection, type GeodeticSystem } from "@spacexr/geodesy";
+import { UtmProjection, type GeodeticSystem } from "@spacexr/geodesy";
 
 import { boundsFromPoints, type EcefBounds } from "./bounding-volumes";
 import type { IVector3 } from "./ecef-types";
 import type { IHorizontalDatumTransformation, IUtmPlacement, IUtmPlacementOptions, UtmVerticalOrigin } from "./utm-types";
 
-/**
- * Margin in metres applied to orthometric heights when no geoid model is supplied.
- *
- * The EGM2008 geoid undulation ranges from about -106 m (Indian Ocean) to about +86 m (New Guinea).
- * Widening by 110 m keeps every orthometric height inside the derived ellipsoidal bounds.
- */
-export const GEOID_UNDULATION_MARGIN = 110;
-
-/**
- * Ellipsoidal height range in metres assumed for the terrain surface when a `GROUND` extent has no
- * `groundElevation`, or when the reference is `LOCAL`.
- *
- * It encloses every land surface: the Dead Sea shore lies near -430 m and Mount Everest near +8849 m
- * orthometric height, both within the geoid undulation range of this interval.
- */
-export const UNKNOWN_GROUND_HEIGHT_RANGE: readonly [number, number] = [-500, 9000];
-
-/** Horizontal sample count per axis. Three samples capture the curvature bulge at the extent centre. */
+/** Horizontal sample count per axis. */
 const SAMPLES_PER_AXIS = 3;
 
-/** Ellipsoids of the horizontal datums recognized by `resolveUtmProjection`. */
-const DATUM_ELLIPSOIDS: ReadonlyMap<string, Ellipsoid> = new Map([
-    ["WGS 84", Ellipsoid.WGS84],
-    ["NAD83", Ellipsoid.GRS80],
-    ["NAD83(CSRS)", Ellipsoid.GRS80],
-    ["ETRS89", Ellipsoid.GRS80],
-]);
+/** No datum transformation is assumed without an application policy. */
+export function defaultHorizontalDatumResolver(_projection: IUtmProjection): IHorizontalDatumTransformation | undefined {
+    return undefined;
+}
 
-/**
- * Transformations to WGS 84 published by the EPSG registry, or documented null transformations.
- *
- * Exact transformations between these datums are time dependent: they require a coordinate epoch and a
- * 14-parameter Helmert transformation through ITRF. The extension does not carry a coordinate epoch, so
- * the published null transformations are used and their full error is covered by `accuracy`.
- */
-const WGS84_TRANSFORMATIONS: ReadonlyMap<string, IHorizontalDatumTransformation> = new Map([
-    ["WGS 84", { name: "identity", accuracy: 0 }],
-    ["NAD83", { name: "EPSG:1188 NAD83 to WGS 84 (1), null transformation", accuracy: 4 }],
-    ["ETRS89", { name: "EPSG:1149 ETRS89 to WGS 84 (1), null transformation", accuracy: 1 }],
-    [
-        "NAD83(CSRS)",
-        { name: "NAD83(CSRS) to WGS 84 null transformation, epoch-dependent ITRF offset of up to 2 m not modelled", accuracy: 2 },
-    ],
-]);
-
-/**
- * Default datum resolver, targeting WGS 84.
- *
- * Returns `undefined` for extents whose datum is unknown, for example a zone without an EPSG code
- * or an unrecognized EPSG code. Such extents are reported as `unresolved-datum` and are not placed.
- * Supply another resolver to place them, or when the spatial metric does not use WGS 84.
- */
-export function defaultHorizontalDatumResolver(projection: IUtmProjection): IHorizontalDatumTransformation | undefined {
-    return projection.datum === undefined ? undefined : WGS84_TRANSFORMATIONS.get(projection.datum);
+function explicitGeoidMargin(options: IUtmPlacementOptions): number {
+    const margin = options.geoidUndulationMargin;
+    if (margin === undefined || !Number.isFinite(margin) || margin < 0)
+        throw new RangeError("An explicit nonnegative geoid margin or geoid model is required.");
+    return margin;
 }
 
 interface IVerticalModel {
@@ -73,7 +32,7 @@ function upwardInterval(vertical: IVerticalExtent): [number, number] {
     return vertical.direction === "DOWN" ? [-vertical.maximum, -vertical.minimum] : [vertical.minimum, vertical.maximum];
 }
 
-function verticalModel(vertical: IVerticalExtent): IVerticalModel {
+function verticalModel(vertical: IVerticalExtent, options: IUtmPlacementOptions): IVerticalModel {
     const [lower, upper] = upwardInterval(vertical);
     switch (vertical.reference) {
         case "ELLIPSOID":
@@ -92,7 +51,12 @@ function verticalModel(vertical: IVerticalExtent): IVerticalModel {
     }
     return {
         origin: "assumed-terrain",
-        range: [UNKNOWN_GROUND_HEIGHT_RANGE[0] + lower, UNKNOWN_GROUND_HEIGHT_RANGE[1] + upper],
+        range: (() => {
+            const range = options.unknownGroundHeightRange;
+            if (!range || !range.every(Number.isFinite) || range[0] > range[1])
+                throw new RangeError("An explicit valid terrain height envelope is required.");
+            return [range[0] + lower, range[1] + upper];
+        })(),
         orthometric: false,
     };
 }
@@ -100,15 +64,15 @@ function verticalModel(vertical: IVerticalExtent): IVerticalModel {
 /**
  * Derives the ellipsoidal height interval of a vertical extent without a geoid model.
  *
- * Orthometric and ground-anchored values are widened by {@link GEOID_UNDULATION_MARGIN}. Ground values
- * without `groundElevation` and `LOCAL` values use {@link UNKNOWN_GROUND_HEIGHT_RANGE}.
+ * Orthometric and ground-anchored values use the caller-supplied margin. Ground values
+ * without `groundElevation` and `LOCAL` values require an explicit height envelope.
  *
  * @param vertical - Vertical extent of a UTM bounding volume.
  * @returns Minimum and maximum ellipsoidal heights in metres.
  */
-export function ellipsoidalHeightRange(vertical: IVerticalExtent): [number, number] {
-    const model = verticalModel(vertical);
-    return model.orthometric ? [model.range[0] - GEOID_UNDULATION_MARGIN, model.range[1] + GEOID_UNDULATION_MARGIN] : model.range;
+export function ellipsoidalHeightRange(vertical: IVerticalExtent, options: IUtmPlacementOptions): [number, number] {
+    const model = verticalModel(vertical, options);
+    return model.orthometric ? [model.range[0] - explicitGeoidMargin(options), model.range[1] + explicitGeoidMargin(options)] : model.range;
 }
 
 /** ECEF bounds of a UTM extent together with the report of how they were derived. */
@@ -151,13 +115,13 @@ export function boundsFromUtm(extent: IUtmBoundingVolume, system: GeodeticSystem
     const datumTransformation = (options.datumResolver ?? defaultHorizontalDatumResolver)(projection);
     if (!datumTransformation) return { placement: { status: "unresolved-datum", projection, horizontalMargin: 0, verticalMargin: 0 } };
 
-    const vertical = verticalModel(extent.vertical);
+    const vertical = verticalModel(extent.vertical, options);
     const geoid = vertical.orthometric ? (options.geoidUndulation ? "model" : "margin") : undefined;
-    const verticalMargin = geoid === "margin" ? GEOID_UNDULATION_MARGIN : 0;
+    const verticalMargin = geoid === "margin" ? explicitGeoidMargin(options) : 0;
     const minimumHeight = vertical.range[0] - verticalMargin;
     const maximumHeight = vertical.range[1] + verticalMargin;
 
-    const ellipsoid = (projection.datum === undefined ? undefined : DATUM_ELLIPSOIDS.get(projection.datum)) ?? system.ellipsoid;
+    const ellipsoid = datumTransformation.sourceEllipsoid ?? system.ellipsoid;
     const utm = new UtmProjection(projection.zone, projection.hemisphere, ellipsoid);
     const points: IVector3[] = [];
     const geodetic = { latitude: 0, longitude: 0, height: 0 };

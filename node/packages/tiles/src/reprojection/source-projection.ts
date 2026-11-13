@@ -10,7 +10,7 @@ export interface IMapPosition {
 
 /**
  * Projection of a raster source: from a unit direction of the body-fixed frame to the map of the source, and back. The
- * directions of the cube index go through it, whatever the source. Latitudes are never read from the cube directly: each
+ * unit directions go through it, whatever the source. Latitude conventions are explicit: each
  * projection states which latitude its source uses.
  */
 export interface ISourceProjection {
@@ -29,7 +29,7 @@ export interface IGeographicProjectionOptions {
     semiMajorAxis: number;
     /**
      * Polar radius of the ellipsoid of the source, for a source with geodetic latitudes such as EPSG:4326. Defaults to
-     * `semiMajorAxis`: on a sphere, as in `GCS_Moon_2000`, latitudes are planetocentric.
+     * `semiMajorAxis`: on a sphere, latitudes are planetocentric.
      */
     semiMinorAxis?: number;
     /** Longitude of the centre of the map, in degrees. Defaults to 0: longitudes run from -180 to 180. */
@@ -143,9 +143,9 @@ export class PolarStereographicProjection implements ISourceProjection {
 }
 
 export interface IWebMercatorProjectionOptions {
-    /** Radius of the map, in metres. Defaults to the WGS84 semi-major axis of EPSG:3857. */
-    semiMajorAxis?: number;
-    /** Polar radius of the ellipsoid of the latitudes. Defaults to WGS84. */
+    /** Radius of the map, in metres. Supplied explicitly in metres. */
+    semiMajorAxis: number;
+    /** Polar radius of the ellipsoid of the latitudes. Supplied explicitly by the caller. */
     semiMinorAxis?: number;
 }
 
@@ -159,9 +159,10 @@ export class WebMercatorProjection implements ISourceProjection {
     private readonly radius: number;
     private readonly squaredRatio: number;
 
-    public constructor(options: IWebMercatorProjectionOptions = {}) {
-        this.radius = options.semiMajorAxis ?? 6378137;
-        const b = options.semiMinorAxis ?? 6356752.314245179;
+    public constructor(options: IWebMercatorProjectionOptions) {
+        this.radius = options.semiMajorAxis;
+        if (!(this.radius > 0) || !Number.isFinite(this.radius)) throw new RangeError("A projection requires a positive finite radius.");
+        const b = options.semiMinorAxis ?? options.semiMajorAxis;
         this.squaredRatio = (this.radius * this.radius) / (b * b);
         this.periodX = 2 * Math.PI * this.radius;
     }

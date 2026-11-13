@@ -5,7 +5,7 @@
  * - `area`: each sample covers one pixel, so sample `i` is centred at `(i + 0.5) / size`. This is how web tiles are
  *   published, elevation and imagery alike; two neighbouring tiles never share a sample.
  * - `point`: sample `i` lies at `i / (size - 1)`, so the first and last samples lie on the tile edges, as in the tiles of
- *   the cube index and in stitched rasters.
+ *   a multi-root pyramid and in stitched rasters.
  */
 export type RasterRegistration = "area" | "point";
 

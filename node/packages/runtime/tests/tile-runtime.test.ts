@@ -2,9 +2,9 @@ import type { IMetadataSchema, ITile, ITileset } from "@spacexr/3d-tiles-core";
 import { describe, expect, it } from "vitest";
 
 import type {
+    ContentLoadResult,
     ICameraEventSource,
     IContentLoadContext,
-    ContentLoadResult,
     IContentPresentationContext,
     ILoadedTileset,
     IRuntimeAdapter,
