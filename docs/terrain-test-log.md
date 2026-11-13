@@ -584,19 +584,23 @@ All paths on both engines, one run: grids of 64 cells, threshold of 10 pixels fo
 - **Synthetic Moon:** `plain` and `face-edge`, both engines, 4 s: no hole, 0 m on the GPU, 0.015 m on the mesh engine of `plain`.
 - **Renderers:** on the cube, the GPU engine runs its GLSL converted by Babylon on WebGPU; `plain/gpu` differs from WebGL by 22 pixels.
 
-#### T30. The depth of the terrain from the availability of the dataset, and Mars
+#### T30. The depth of the cube geometry, and Mars
 
-- **Failed, in the grafts:** the terrain of a dataset was a global `maxLOD`, the DEM levels held everywhere plus the levels below a DEM tile, and subtrees grafted at the roots the dataset declares. A graft replaces a tile the tree already reaches, so a region starting more than one level below the global depth was never reached. The Moon passed by chance, Shackleton from level 7 under a terrain of 8; Mars did not, Jezero from level 7 under a terrain of 6 (MOLA to 4, plus 2): over Jezero, 51 tiles to level 6, all reading the DEM of level 4. Re-rooting the grafts at level 6 was rejected: it refines a whole tile of level 6 outside the data.
-- **Kept:** the cube source writes the availability of each tile in its virtual implicit subtrees, from `isAvailable`. A terrain tile exists where the dataset reaches, somewhere within it, the DEM level its cells sample: `CelestialTileSource.deepestLevelWithin`, which never decreases from a tile to its parent. The grafts of the cube are gone.
-- **Measured, one run each, GPU, headless Chrome, imagery off, R2 datasets:** 0 pending and 0 unbalanced edges at rest, no error.
+- **Failed, in the grafts:** the terrain of a dataset was a global `maxLOD`, the DEM levels held everywhere plus the levels below a DEM tile, and subtrees grafted at the roots the dataset declares. A graft replaces a tile the tree already reaches, so a region starting more than one level below the global depth was never reached. The Moon passed by chance, Shackleton from level 7 under a terrain of 8; Mars did not, Jezero from level 7 under a terrain of 6 (MOLA to 4, plus 2): over Jezero, 51 tiles to level 6, all reading the DEM of level 4.
+- **Failed, in the availability of the data:** the geometry made available only where the dataset reaches the DEM level of its cells. In Jezero, where CTX stops at a margin per level and HiRISE covers a strip, displayed neighbours were 2 to 4 levels apart (21 edges looking west, 14 south), with cracks; zooming in, a tile straddling a limit was replaced by its available children only, leaving holes. Both break the rule of `runtime-architecture.md`: geometric availability is independent of the physical DEM. The quadtree balance cannot refine a neighbour whose children do not exist.
+- **Failed, in the measure:** the `unbalanced` counter of the runtime counts pairs of visible selected tiles only; T30 first reported 0 there while visible cracks remained. The probe now compares every edge of the visible selected tiles itself.
+- **Kept:** the geometry of the cube is dense on every face down to the deepest DEM level anywhere plus the levels below a DEM tile, as on Web Mercator; a tile finer than the data reads a sub-area of the deepest DEM tile at its place. No grafts.
+- **Measured, GPU, headless Chrome, imagery off, R2 datasets, one run each:** among visible selected tiles, no edge more than one level apart, 0 pending, no error. Jezero zoomed from 20 km to 300 m reaches level 16 over HiRISE, without holes.
 
-| View                           | Terrain levels drawn | DEM levels read |
-| ------------------------------ | -------------------- | --------------- |
-| Mars, Jezero, 40 km            | 4 to 9               | 4, 7 to 9       |
-| Mars, Jezero, 4 km             | 4 to 13              | 4, 7 to 13      |
-| Mars, whole body               | 0 to 1               | 0 to 1          |
-| Moon, Shackleton, 30 km        | 4 to 9               | 4 to 9          |
-| Moon, away from the cap, 40 km | 4 to 8               | 4 to 6          |
-| Synthetic Moon, 40 km          | 4 to 8               | none, synthetic |
+| View                                   | Terrain levels drawn | Visible edges two levels apart or more |
+| -------------------------------------- | -------------------- | -------------------------------------- |
+| Mars, west limit of CTX, 6 km          | 4 to 13              | 0, against 21 with data availability   |
+| Mars, south limit of CTX, 6 km         | 4 to 13              | 0, against 14                          |
+| Mars, Jezero, 20 km, 4 km, 1 km, 300 m | 4 to 10, 13, 15, 16  | 0                                      |
+| Moon, Shackleton, 8 km                 | 4 to 12              | 0                                      |
+| Moon, cap border, 20 km                | 4 to 9               | 0                                      |
+| Moon, away from the cap, 4 km          | 4 to 12              | 0                                      |
+| Synthetic Moon, 4 km                   | 5 to 12              | 0                                      |
 
-- **Not measured:** frame rates and holes in motion with the bench, and Mars on WebGPU.
+- **Moon in motion, bench, 4 s, `plain`, `pole`, `cap-border` on the GPU:** 0 holes, 0 m between shared vertices in the view and at rest. Frame rates, 63 to 77, are not compared: the user tested on the machine at the same time.
+- **Not solved:** a thin light line along the west limit of CTX at 6 km, without any level gap; the Jezero tiles blend into MOLA 4 ppd at their edges while the global base is MOLA 16 ppd.

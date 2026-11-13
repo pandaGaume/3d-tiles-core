@@ -1,13 +1,4 @@
-import type {
-    IAvailability,
-    IContent,
-    IMetadataEntity,
-    ISubtree,
-    ISubtreeBufferView,
-    ITile,
-    ITileset,
-    NonEmptyArray,
-} from "@spacexr/3d-tiles-core";
+import type { IContent, IMetadataEntity, ITile, ITileset, NonEmptyArray } from "@spacexr/3d-tiles-core";
 import {
     CUBE_FACE_COUNT,
     cubeTileGeometricError,
@@ -19,17 +10,13 @@ import {
     type ITileUrlTemplateOptions,
 } from "@spacexr/tiles";
 
-import { implicitAvailabilityIndex, implicitMortonIndex } from "./coordinates";
 import { ImplicitTilesetDecorator, type ITileAddress, type ITileDataSource, type ITileDataSourceTile } from "./tile-data-source";
 import type {
     IImplicitCoordinates,
-    IImplicitSubtreeLoader,
-    IImplicitSubtreeLoadRequest,
     IImplicitTileAddressContext,
     IImplicitTileOverride,
     IImplicitTileResolveContext,
     IImplicitTileResolver,
-    ILoadedImplicitSubtree,
 } from "./types";
 
 /** Directions sampled per side of a tile to bound it, as the specification requires. */
@@ -204,7 +191,10 @@ export interface ICubeImplicitSourceOptions extends ITileUrlTemplateOptions {
     surface: CubeTileSurface;
     /** Level of the roots of the quadtrees, `4^minLOD` per face. Defaults to 0. */
     minLOD?: number;
-    /** Deepest level of the pyramid anywhere. */
+    /**
+     * Deepest level of the quadtrees, on every face: tiles are available down to it everywhere, whatever the depth of
+     * the data, which a tile finer than the data at its place reads as a sub-area of the deepest data tile there.
+     */
     maxLOD: number;
     /** URL templates, which may use `{face}`. */
     urlTemplates: string | readonly string[];
@@ -215,11 +205,6 @@ export interface ICubeImplicitSourceOptions extends ITileUrlTemplateOptions {
     maximumHeight?: number;
     /** Measured radial height range of a tile; the bounding box follows it. */
     heightRange?: (address: ITileAddress) => readonly [number, number] | undefined;
-    /**
-     * Whether the pyramid holds a tile, where its depth varies from place to place; without it, every tile down to
-     * `maxLOD`. It must hold the parent of every tile it holds, as the availability of 3D Tiles implicit tiling.
-     */
-    isAvailable?: (address: ITileAddress & { face: number }) => boolean;
     tileMetadata?: (address: ITileAddress) => IMetadataEntity | undefined;
     contentMetadata?: (address: ITileAddress, contentIndex: number) => IMetadataEntity | undefined;
 }
@@ -228,8 +213,6 @@ export interface ICubeImplicitSourceOptions extends ITileUrlTemplateOptions {
 export interface ICubeImplicitSource {
     tileset: ITileset;
     resolver: IImplicitTileResolver;
-    /** Loads the availability subtrees of the quadtrees: the runtime adapter takes it as its subtree loader. */
-    subtrees: IImplicitSubtreeLoader;
     dataSources: readonly CubeTileDataSource[];
 }
 
@@ -260,104 +243,9 @@ class CubeImplicitResolver implements IImplicitTileResolver {
     }
 }
 
-/** Bits of an availability bitstream, least significant bit first, as 3D Tiles implicit tiling stores them. */
-class AvailabilityBits {
-    public readonly bytes: Uint8Array;
-    public count = 0;
-
-    public constructor(private readonly length: number) {
-        this.bytes = new Uint8Array(Math.ceil(length / 8));
-    }
-
-    public set(index: number): void {
-        const mask = 1 << (index % 8);
-        const byte = index >> 3;
-        if ((this.bytes[byte]! & mask) !== 0) return;
-        this.bytes[byte] = this.bytes[byte]! | mask;
-        this.count++;
-    }
-
-    /** 0 or 1 when every bit is the same. */
-    public constant(): 0 | 1 | undefined {
-        if (this.count === 0) return 0;
-        return this.count === this.length ? 1 : undefined;
-    }
-}
-
-const SUBTREE_URI = /virtual-subtrees\/([^/]+)\/\d+\/\d+\/\d+\.subtree$/;
-
-/**
- * Writes the availability of the tiles of a cube source as the bits of virtual implicit subtrees: a tile, its contents
- * and a child subtree are available where the pyramid holds them. The URI of a subtree names its quadtree.
- */
-export class CubeAvailabilitySubtreeLoader implements IImplicitSubtreeLoader {
-    public constructor(
-        private readonly sources: ReadonlyMap<string, CubeTileDataSource>,
-        private readonly isAvailable?: (address: ITileAddress & { face: number }) => boolean,
-    ) {}
-
-    public async load(request: IImplicitSubtreeLoadRequest): Promise<ILoadedImplicitSubtree> {
-        if (request.signal.aborted) throw request.signal.reason;
-        const match = SUBTREE_URI.exec(request.uri);
-        const source = match ? this.sources.get(decodeURIComponent(match[1]!)) : undefined;
-        if (!source) throw new Error(`${request.uri} is not a subtree of this cube source.`);
-        const tiling = request.implicitTiling;
-        const root = request.coordinates;
-        const holds = (level: number, x: number, y: number): boolean => {
-            if (root.level + level >= tiling.availableLevels) return false;
-            if (!this.isAvailable) return true;
-            const scale = 2 ** level;
-            const address = source.addressOf({ level: root.level + level, x: root.x * scale + x, y: root.y * scale + y });
-            return this.isAvailable(address as ITileAddress & { face: number });
-        };
-
-        const levels = tiling.subtreeLevels;
-        const tiles = new AvailabilityBits((4 ** levels - 1) / 3);
-        for (let level = 0; level < levels; level++)
-            for (let y = 0; y < 2 ** level; y++)
-                for (let x = 0; x < 2 ** level; x++) if (holds(level, x, y)) tiles.set(implicitAvailabilityIndex({ level, x, y }, tiling));
-        const children = new AvailabilityBits(4 ** levels);
-        for (let y = 0; y < 2 ** levels; y++)
-            for (let x = 0; x < 2 ** levels; x++)
-                if (holds(levels, x, y)) children.set(implicitMortonIndex({ level: levels, x, y }, tiling.subdivisionScheme));
-
-        const streams: Uint8Array[] = [];
-        const views: ISubtreeBufferView[] = [];
-        let byteLength = 0;
-        const availability = (bits: AvailabilityBits): IAvailability => {
-            const constant = bits.constant();
-            if (constant !== undefined) return { constant };
-            views.push({ buffer: 0, byteOffset: byteLength, byteLength: bits.bytes.byteLength });
-            streams.push(bits.bytes);
-            byteLength += bits.bytes.byteLength;
-            return { bitstream: views.length - 1, availableCount: bits.count };
-        };
-        const tileAvailability = availability(tiles);
-        const childSubtreeAvailability = availability(children);
-        const subtree: ISubtree = {
-            tileAvailability,
-            // Every tile the pyramid holds has its contents.
-            ...(request.contentCount > 0
-                ? { contentAvailability: Array.from({ length: request.contentCount }, () => tileAvailability) as [IAvailability] }
-                : {}),
-            childSubtreeAvailability,
-            ...(views.length > 0 ? { buffers: [{ byteLength }], bufferViews: views as NonEmptyArray<ISubtreeBufferView> } : {}),
-        };
-        if (views.length === 0) return { subtree };
-        const buffer = new Uint8Array(byteLength);
-        let offset = 0;
-        for (const bytes of streams) {
-            buffer.set(bytes, offset);
-            offset += bytes.byteLength;
-        }
-        return { subtree, buffers: [buffer] };
-    }
-}
-
 /**
  * Presents a whole body on the cube index as implicit 3D Tiles: a `region` cannot describe a polar face, so tiles
- * carry oriented boxes, and the explicit root is a sphere around the body. Each tile is available where the pyramid
- * holds it, so that its depth may vary from place to place, as the subtrees of a celestial dataset.
+ * carry oriented boxes, and the explicit root is a sphere around the body.
  */
 export function createCubeImplicitSource(options: ICubeImplicitSourceOptions): ICubeImplicitSource {
     const { surface, maxLOD, urlTemplates, tileSize, minimumHeight, maximumHeight, tileMetadata, contentMetadata, subdomains, variables } =
@@ -366,7 +254,6 @@ export function createCubeImplicitSource(options: ICubeImplicitSourceOptions): I
     const minLOD = options.minLOD ?? 0;
     const decorators = new Map<ITile, ImplicitTilesetDecorator>();
     const dataSources: CubeTileDataSource[] = [];
-    const sources = new Map<string, CubeTileDataSource>();
     const create = (sourceId: string, rootAddress: ITileAddress & { face: number }): ITile => {
         const dataSource = new CubeTileDataSource({
             id: sourceId,
@@ -385,19 +272,21 @@ export function createCubeImplicitSource(options: ICubeImplicitSourceOptions): I
         const decorator = new ImplicitTilesetDecorator(dataSource, {
             ...(options.subtreeLevels !== undefined ? { subtreeLevels: options.subtreeLevels } : {}),
             ...(options.refine ? { refine: options.refine } : {}),
-            subtreesUri: `virtual-subtrees/${encodeURIComponent(sourceId)}/{level}/{x}/{y}.subtree`,
         });
         dataSources.push(dataSource);
-        sources.set(sourceId, dataSource);
         decorators.set(decorator.tileset.root, decorator);
         return decorator.tileset.root;
     };
 
     const children: ITile[] = [];
     const roots = 2 ** minLOD;
-    for (let face = 0; face < CUBE_FACE_COUNT; face++)
-        for (let y = 0; y < roots; y++)
-            for (let x = 0; x < roots; x++) children.push(create(`${id}-${face}-${x}-${y}`, { face, lod: minLOD, x, y }));
+    for (let face = 0; face < CUBE_FACE_COUNT; face++) {
+        for (let y = 0; y < roots; y++) {
+            for (let x = 0; x < roots; x++) {
+                children.push(create(`${id}-${face}-${x}-${y}`, { face, lod: minLOD, x, y }));
+            }
+        }
+    }
 
     const geometricError = Math.max(...children.map((child) => child.geometricError));
     const [a, b, c] = surface.reference.radii;
@@ -413,7 +302,6 @@ export function createCubeImplicitSource(options: ICubeImplicitSourceOptions): I
             },
         },
         resolver: new CubeImplicitResolver(decorators, surface, options.heightRange),
-        subtrees: new CubeAvailabilitySubtreeLoader(sources, options.isAvailable),
         dataSources,
     };
 }

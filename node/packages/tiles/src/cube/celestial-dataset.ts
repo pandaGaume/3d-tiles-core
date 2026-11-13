@@ -125,8 +125,6 @@ export class CelestialTileSource {
     public readonly client: TileHttpClient;
     /** Deepest level of the subtree rooted at each tile. */
     private readonly subtreeDepths = new Map<string, number>();
-    /** Deepest level of the subtrees rooted at each tile or below it, for every tile above a subtree root. */
-    private readonly depthsWithin = new Map<string, number>();
 
     /** @param dataset - The descriptor, or its JSON value, checked by {@link parseCelestialDataset}. */
     public constructor(dataset: ICelestialDataset | unknown, options: ICelestialTileSourceOptions = {}) {
@@ -138,27 +136,7 @@ export class CelestialTileSource {
         for (const { face, lod, x, y, maxLOD } of this.dataset.subtrees) {
             const root = `${face}/${lod}/${x}/${y}`;
             this.subtreeDepths.set(root, Math.max(maxLOD, this.subtreeDepths.get(root) ?? 0));
-            for (let level = lod; level >= 0; level--) {
-                const shift = lod - level;
-                const key = `${face}/${level}/${Math.floor(x / 2 ** shift)}/${Math.floor(y / 2 ** shift)}`;
-                this.depthsWithin.set(key, Math.max(maxLOD, this.depthsWithin.get(key) ?? 0));
-            }
         }
-    }
-
-    /**
-     * Deepest level the dataset reaches anywhere within a tile: the subtrees that cover it, those below it, and the
-     * levels available everywhere. A tile never reaches less deep than one of its children.
-     */
-    public deepestLevelWithin(address: ITileAddress): number {
-        const face = address.face ?? 0;
-        let deepest = Math.max(this.dataset.maxLOD, this.depthsWithin.get(`${face}/${address.lod}/${address.x}/${address.y}`) ?? 0);
-        for (let lod = address.lod - 1; lod >= 0; lod--) {
-            const shift = address.lod - lod;
-            const depth = this.subtreeDepths.get(`${face}/${lod}/${Math.floor(address.x / 2 ** shift)}/${Math.floor(address.y / 2 ** shift)}`);
-            if (depth !== undefined) deepest = Math.max(deepest, depth);
-        }
-        return deepest;
     }
 
     /**
