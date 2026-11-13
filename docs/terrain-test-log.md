@@ -23,6 +23,11 @@ What was tried on the terrain pipeline, what it gave and what not to try again. 
 | One run as a verdict on small differences                                   | `plain/gpu` gave 22.7 then 51.5 FPS, and 780 then 366 instances, between runs of the same code                                             | T6    |
 | Reading a run whose `load s` is about 1 s or less, or that draws nothing    | The page was not loaded, or had failed: 120 FPS on 0 triangles, 109 FPS on 19 instances. The harness now rejects both                      | T10   |
 | Running the harness before type checking                                    | A missing import stopped the GPU engine, and the harness waits 60 s per page before going on                                               | T9    |
+| Reading `Material.shaderLanguage` to know what a material runs on WebGPU    | It reports WGSL for any material on WebGPU, a `ShaderMaterial` compiling GLSL included. Read `shaderLanguage` of the compiled effect       | T27   |
+| Comparing WebGL and WebGPU images with multisampling                        | 99 % of the differing pixels are edges resolved by the hardware and the graphics API, not the shaders. The comparison passes `antialias=0` | T27   |
+| A `forceGLSL` option as the reference of the WGSL                           | Rejected by the project owner on 2026-11-07: the comparison is WebGL from GLSL against WebGPU from WGSL                                    | T27   |
+| Reading the GPU `edge m` columns from 2026-11-07 to T28                     | The probe read the references of one instance grid for all of them: 3 to 8 km reported where the engine drew none. Fixed in T28            | T28   |
+| The terrain bench with `renderer=webgpu`                                    | It counts uploads through WebGL `bufferData` and stops on WebGPU. WebGPU is checked by `npm run compare:renderers`                         | T28   |
 
 ## How to measure
 
@@ -450,3 +455,112 @@ All paths on both engines, one run: grids of 64 cells, threshold of 10 pixels fo
 - **Activations are still cancelled at once,** 0 to 70 per path at 500 ms, and give their load slot back: the delay only concerns the request behind them.
 - **No gap in the view and none at rest** on the 24 runs, and the probe saw its 100 m on all of them. Holes in motion stay small and vary between runs: up to 150 pixels at 0 ms, none at 500 ms, up to 29 at 2 000 ms. Two runs do not separate them.
 - **Frame rates:** 83 to 120 FPS at 500 ms. `plain-zoom` gives 94 and 83 FPS, and 90 and 65 at 0 ms. The slow frame rates of T19 did not come back on the same paths, which points to a busier machine then, without proving it.
+
+#### T21. A habitat from a Blender scene on the 5 m DEM of Shackleton
+
+- **Change:** `tileset=` of the example loads a tileset by HTTP, and `orbitalCamera` of `terrain-config.json` lets the camera come to 10 m from its point and 1.5 m above the terrain, instead of 500 m and 50 m. The habitat comes from `nuit9-shackleton.blend` of the CO2 scrubber film, through `scripts/export-shackleton-habitat.py` of the example.
+- **Failed first:** the glTF exporter with `use_selection` alone took what was selected in the other scenes of the file, the terrain included: 125 MiB per file, 5 million triangles. With `use_active_scene`: 0.9 MiB and 44 340 triangles for the station, 3 MiB and 54 908 for the rover.
+- **Placement, checked against the film:** the site at x = 25 100 m, y = -7 613 m of the south polar stereographic projection reads a radius of 1 737 562.0 m on the DEM of the tile service, where the film states 163 m over 1 737 400 m, so 1 737 563 m. The station stands at 1 737 562.03 m in the scene, as declared.
+- **Ground:** the six feet stand on heights from -538.10 to -537.83 m. The station is level at their mean, so a foot floats or sinks by up to 14 cm. The film levels its ground, the DEM does not. The rover stands 0.415 m higher, on the DEM where it is parked.
+- **Not measured:** the cost of the objects with the harness, and the frame rate beyond one reading of 120 FPS at rest and about 10 FPS while the terrain loads, on one machine. The levelled ground, the tracks, the night lighting, the sky and the Earth of the film are not reproduced.
+- **Black metal, two causes:** the scene had no environment, and the brushed aluminium exported `KHR_materials_anisotropy` on meshes without tangents or texture coordinates. An environment alone left the aluminium black: only turning its anisotropy off in the page made it silver, so the export now sets it to 0. `objects-environment.ts` of the example builds the environment from its own JSON file, without any texture file: it stays out of the engine. With the lights off, the hull stays lit by it alone, and its first-order term is brighter toward the ground. It also needs `RegisterBaseTexturePolynomial`, which the materials do not call: without it the hull receives no diffuse light from the environment.
+- **Not covered:** the up direction of the environment is the target of the page, like the lights: objects seen from a page opened far from them reflect a tilted horizon. The cost of the environment was not measured apart.
+
+#### T22. A value of hysteresis on visibility, abandoned
+
+- **Failed:** a `frustumHysteresis` of 0.25, chosen by hand, to keep a tile in use until it went further than the tile entering. On `ground-level`, 6 s, it gave 17.1 FPS and 47 ms of terrain per frame in its one complete run, against 81.4 FPS and 5.1 ms without. Removed, with the rule that a fix does not rest on a tuned value.
+- **Failed, in the measure:** the page of the Browser pane is throttled while the pane is hidden or its session is not shown: pauses of 1 s, and 0 to 6 frames in 6 s. They said nothing about the engine. Use the harness.
+- **Failed, in the harness call:** Git Bash rewrites `tileset=/moon-sites/...` into a Windows path, so the page could not fetch it. Set `MSYS_NO_PATHCONV=1`, and give `--out` as `C:/...`.
+- **What the cost was not:** the 99 000 triangles of the habitat add less than 1 ms of CPU per frame. Hidden or not, `beforeRender` of the GPU engine costs the same.
+- **What it was:** with a heading going back and forth, `rebuild` ran 233 times in 660 frames and gave the same list of drawn tiles 201 times, 1 808 ms in all. 186 requests came from `present` and `hide` of the terrain runtime, 47 from the pages of the imagery. 23 tiles came and went, 5 to 11 times each, from level 4 to level 13. The test of visibility had no hysteresis, and `coverFill` drew the tile that had left again.
+
+#### T23. Active tiles
+
+- **Change:** `visible` is now the view of the camera, without margin. `active` is visible, in the periphery of `frustumMargin`, or a child of a visible tile. Active tiles stay selected, refine and merge. Only visibility decides what waits: loads, ancestors brought into the view and the quadtree balance. No new setting.
+- **Failed first:** an unloaded neighbour outside the view held back the refinement on screen through the balance, level 2 instead of 3. A test of the balance found it, and the balance now only reads visible tiles. The rule also ignored `preloadSiblings: false`, whose contract is that children outside the view do not load: the rule of children now follows that option.
+- **Setup:** GPU engine, 6 s, one run per path, except 2 for `mont-blanc`. Raw reports: `T22-ground-0-b.json` and `T23-*.json` in [terrain-tests](terrain-tests/). The GPU time of `ground-level`, 4.87 and 4.66 ms, suggests a comparable machine. It does not for the older `plain` and `pole`, 11.1 and 16.1 ms against 3.1 and 4.6 ms: their frame rates are not compared.
+
+| Path                                 | FPS   | p99 ms | Terrain ms | Rebuilds | Giving the same list |
+| ------------------------------------ | ----- | ------ | ---------- | -------- | -------------------- |
+| `ground-level`, before               | 81.4  | 51.1   | 5.07       | 231      | 204                  |
+| `ground-level`, active               | 109.8 | 23     | 1.86       | 189      | 166                  |
+| `ground-level-sway`, before          | 66.5  | 59.8   | 2.39       | 98       | 93                   |
+| `ground-level-sway`, active          | 85.5  | 29.9   | 1.09       | 48       | 41                   |
+| `ground-level`, active, habitat      | 92.8  | 32.9   | 3.28       | 176      | 153                  |
+| `ground-level-sway`, active, habitat | 89    | 25.7   | 0.92       | 41       | 35                   |
+
+- **Not solved:** most rebuilds still give the same list, 166 of 189 turning one way.
+- **Worse:** tiles shown again within 2 s, which a camera turning one way should not bring back. `mont-blanc` 75 and 78 against 11 in T18 and T20, `plain` 74 against 14 in a run of 8 s, `pole` 60 against 35. Not explained.
+- **Not explained:** with the habitat, 747 and 657 hole pixels in motion on the two paths, 0 at rest and 0 without the habitat. The probe counts background pixels below the terrain, and may be misled by the objects. Not checked.
+- **Integrity without the habitat:** no hole and no gap, in motion and at rest, on the 5 paths, and the probe saw its 100 m. Changes with a still camera: 55 then 0 on `mont-blanc`, a figure that already varied from 0 to 15 before.
+- **Not measured:** the mesh engine, and what `mont-blanc` costs at the same load as before.
+
+### Base selection, 2026-11-07
+
+#### T24. Holes while zooming on `mont-blanc-zoom`
+
+- **First reading:** parent tiles hidden before their children are drawn. It was not that: the runtime shows entering tiles before it hides leaving ones, and no hole frame had a `present` or a `hide`.
+- **Measured:** a temporary probe of the harness, 6 s, both engines. 13 hole frames on the mesh engine, worst 10 477 pixels; 12 then 29 on the GPU engine, worst 24 152. None at rest. Every selected tile had its DEM.
+- **Cause:** at each hole frame the list of drawn tiles had not changed for 1 to 14 frames, and visible tiles were covered by no drawn tile, more of them each frame. Each of those frames called `retainBaseCut` from `closeBaseQuadtreeCut`, never from `baseReplacementBlocked`: one coarse neighbour whose children were not ready made `refineQuadtreeCut` refuse the whole new list, and the list of the frame before was drawn again for a camera that had moved.
+- **Not solved:** no fix tried.
+- **Why two levels apart:** a second run counted the pairs of tiles two levels or more apart in each list `refineQuadtreeCut` refused. Mesh: 36 refusals of 405, 109 pairs. GPU: 43 of 276, 124 pairs. Every pair was two levels apart, and in every one the coarse tile asked to refine by its own screen space error, 13 to 31.7 for a threshold of 10, with none of its four children ready. The screen space error alone never gave the jump: the neighbouring branch was ready and refined, this one had not loaded. The same coarse tile, `6/32/21`, stayed with 0 of 4 children ready across the samples of the zoom. Why its children take so long was not measured.
+- **How long the children wait:** a third run followed the children of each coarse tile a refusal waited for, through the load queue of 12 slots. 40 children on each engine became ready after 2 to 17 frames, 38 to 428 ms: 3 to 5 frames before they are even requested, their contents not yet known, then queued first or nearly at the priority of the balance, then about 4 frames of loading. That is the normal time of a load, not a stalled one, but the zoom creates a new jump before the last one is ready, so the list stays refused. Not explained: some running loads have priorities of 3e21 to 7e21.
+
+#### T25. Displayable tiles: the refusal becomes local
+
+- **Change:** a ready tile is displayable only within one level of its neighbours. When `refineQuadtreeCut` refuses an edge, only the new tiles involved, the fine one and those split for it, give their place back to what was displayed there; the rest of the list is published. The previous list is kept whole only when displayed tiles alone are involved.
+- **Measured:** `mont-blanc` and `mont-blanc-zoom`, both engines, 6 s, two runs of the zoom. The whole list was never refused again, 0 of 283 to 474 closures. `mont-blanc` has no hole. A first run of `mont-blanc/mesh` drew nothing after a shader that failed to compile, and drew at 108.9 FPS without hole when run again.
+- **Not solved:** holes while zooming, at a rate close to T24. Mesh: 6 and 13 frames, at worst 687 and 2 232 pixels, against 8 to 13 frames and 1 423 to 10 477 in T24. GPU: 19 and 23 frames, 8 754 and 6 793 pixels, against 12 to 29 frames and 6 381 to 24 152. Two runs do not separate the worst figures from the variation.
+- **Cause of what remains:** the list now changes at every frame, but places enter the view whose tile is still loading. Their ready ancestor, for example `10/530/365` for `11/1061/730`, would be two levels coarser than a displayed neighbour, so it is not displayable, and nothing was displayed there the frame before. Such a place stays empty for 1 to 9 frames.
+
+#### T26. Loading the periphery of the view
+
+- **Change:** with a periphery, `frustumMargin` of `terrain-config.json` at 0.25 of the half extent of the view, the base selection loads the tiles of the periphery and their descendants down to the threshold, without selecting them. A waiting subtree now follows the priority of the frame, like contents.
+- **Failed first:** periphery loads at the priority of the view, their screen space error. `mont-blanc-zoom`, three runs: mesh 11, 2 frames with holes, at worst 1 740 and 12 pixels; GPU 16, 24 and one more run, 7 141, 9 110 and 9 565 pixels. The tiles still missing were visible, their implicit subtree not loaded, for 8 frames or more.
+- **Kept:** every load of the periphery comes after every load of the view, priority `-1 / (1 + error)`, with no tuned value. Two runs: mesh 8 and 9 frames, at worst 417 and 558 pixels; GPU 17 and 20 frames, 4 279 and 6 008 pixels. `mont-blanc` has no hole on either engine.
+- **Not solved:** holes while zooming remain, a little smaller than in T25 at a similar rate. Two runs do not separate the difference from the variation. Not measured: the requests and the memory the periphery adds.
+
+### WGSL, 2026-11-07
+
+#### T27. WebGL from GLSL against WebGPU from WGSL
+
+- **Change:** the GPU engine and the imagery drape of the mesh engine have WGSL twins of their GLSL shaders, which WebGPU runs, on the branch `feat/webgpu` of 3d-tiles-babylon. `npm run compare:renderers` draws the two bench views at rest with both, in headless Chrome, and compares the images pixel by pixel.
+- **First failure:** WebGPU drew nothing, with "Destroyed texture used in a submit" at every frame, on `fix/selection` too. The example called `scene.render` in a promise, after the `endFrame` of `runRenderLoop`: the canvas texture was already presented. A first fix submitting with `flushFramebuffer` worked, but kept a frame drawn outside the engine and an internal call. Kept: the frame waits for the selection of its camera, then draws between `beginFrame` and `endFrame`.
+- **Wrong reading:** the language check read `Material.shaderLanguage`, which says WGSL for every material on WebGPU. A first comparison of converted GLSL against WGSL on WebGPU gave 0 pixels on the GPU engine without proving which code ran. Read again on the compiled effects, it still gave 0 pixels on `mont-blanc`, GPU engine and draped mesh engine: the WGSL draws what Babylon draws from the GLSL on WebGPU. That reference used a temporary switch, removed.
+- **Wrong reading:** the WebGL to WebGPU difference was first put on the shader compilers, FXC for ANGLE and DXC for Dawn. Dawn on Direct3D 11 (`--use-webgpu-adapter=d3d11`), compiling with FXC as ANGLE does, left it unchanged: 132 357 then 132 357 pixels on the mesh engine, 61 346 then 61 338 on the GPU engine.
+- **Measured, `mont-blanc`:** two WebGL renderings are identical. Both APIs run on the same Intel Arc 140T, with 4 samples each. With multisampling, 61 346 pixels differ on the GPU engine and 132 357 on the mesh engine, whose shaders are those of Babylon. Without, 514 and 376: multisampling makes 99 % of the difference. SwiftShader for both was not possible: `--use-angle=swiftshader` removes WebGPU from the browser.
+- **Result without multisampling, 905 760 pixels per image:**
+
+| Case                | `mont-blanc` pixels | Largest R G B | `mont-blanc-zoom` pixels | Largest R G B |
+| ------------------- | ------------------- | ------------- | ------------------------ | ------------- |
+| mesh                | 376                 | 3 30 22       | 176                      | 1 1 1         |
+| mesh, imagery       | 1 267               | 241 49 38     | 1 036                    | 8 8 8         |
+| mesh, wireframe     | 46                  | 253 203 111   | 45                       | 202 119 224   |
+| gpu, Mapzen normals | 514                 | 118 119 92    | 309                      | 1 1 1         |
+| gpu, DEM normals    | 733                 | 110 111 85    | 530                      | 1 1 2         |
+| gpu, imagery        | 1 417               | 50 28 18      | 1 147                    | 3 7 3         |
+| gpu, ambient light  | 934                 | 41 28 18      | 827                      | 3 6 3         |
+| gpu, wireframe      | 2 471               | 67 64 43      | 609                      | 35 31 27      |
+
+- **Cause:** on shaded and draped cases, 93 to 100 % of the differing pixels differ by one level of 255, the rounding of the same operations translated twice, by ANGLE to HLSL for WebGL and by Tint for WebGPU. The ambient case, which lights nothing and only reads imagery, has as many: texture filtering shows it too. The rest, 1 to 61 pixels, lie on an edge or a texel boundary of the debug imagery, moved by a pixel. In wireframe, lines move by a pixel: 45 of 46 differing pixels take the colour of a neighbour on the mesh engine. The mechanism inside each translation was not isolated.
+- **Legacy draped path of the GPU engine, forced for one run:** it compiles and draws in WGSL without validation error, 466 and 1 360 pixels differing on `mont-blanc`.
+
+### Main after the merge, 2026-11-08
+
+#### T28. Checking main after #32 of core and #18 of 3d-tiles-babylon
+
+- **Failed, in the probe:** the first bench of `main` reported shared vertices 8 085 m apart on `mont-blanc/gpu` and 6 044 m on `mont-blanc-zoom/gpu`, 6 000 and 3 361 m at rest, with heights of -4 755 and -2 638 m at Mont Blanc. Since `b0e44ca` the GPU engine spreads its instances over one grid per junction topology, and `gpuSharedEdges` still read the elevation references of `terrain.grid`, the grid of one topology, at the index of each instance in `placed`. Read on the grid and index of each instance, all 113 instances of a view had valid references. Bisected first: `54690ab` gave 0 m, `b0e44ca` 8 324 m, without the periphery too, 8 016 m. The same figures were in the runs of T24 to T26, which did not report this column. Raw report: `T28-main-stale-probe.json`.
+- **Failed, in the harness call:** `--query renderer=webgpu` stops the bench, which counts uploads through WebGL `bufferData`.
+- **Kept:** the probe reads each instance on its own grid, at its own index.
+- **Measured, one run, 8 s, with the Browser pane drawing the example at the same time on two paths:** 0 m between shared vertices on the four paths, in motion and at rest, and no hole at rest. Raw report: `T28-main.json`.
+
+| Path                   | FPS  | Hole frames | Worst pixels | Edge m |
+| ---------------------- | ---- | ----------- | ------------ | ------ |
+| `mont-blanc/mesh`      | 100  | 0           | 0            | 0      |
+| `mont-blanc/gpu`       | 89.2 | 2 of 239    | 14           | 0      |
+| `mont-blanc-zoom/mesh` | 91.9 | 5 of 366    | 415          | 0      |
+| `mont-blanc-zoom/gpu`  | 60.8 | 14 of 225   | 4 677        | 0      |
+
+- **Renderers:** `npm run compare:renderers` gives the figures of T27 on the 16 cases, within 7 pixels in wireframe.
+- **Places:** `place=yosemite`, 4 s on both engines in WebGL: 0 m, holes on 2 frames in motion, 31 and 82 pixels at worst. The Google example loads 274 tiles without error.
+- **Not solved:** the holes while zooming of T24 to T26 remain, in their range. Frame rates are not compared with T26: the Browser pane drew the example during this run.

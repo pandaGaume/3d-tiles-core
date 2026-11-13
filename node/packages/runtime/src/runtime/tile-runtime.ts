@@ -78,6 +78,7 @@ import {
     quadtreeImbalances,
     quadtreeTileKey,
     quadtreeTouches,
+    type IQuadtreeCutTile,
     type IQuadtreeImbalance,
     type IQuadtreeTileLocation,
 } from "./quadtree-balance";
@@ -564,7 +565,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         if (this.hasSelectedReplacementAncestor(node, desired)) return;
         node.visible = this.adapter.spatial.isVisible(node.spatial, camera);
         node.active = node.visible;
-        if (!node.visible) return;
+        if (!node.visible) {
+            this.preloadBasePeriphery(node, camera, requested);
+            return;
+        }
         this.touchBaseTile(node, camera);
         const potential = node.contents.some(
             (content) => content.kind === TileContentKind.Unknown || content.kind === TileContentKind.Renderable,
@@ -610,6 +614,34 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             return;
         }
         for (const child of node.children) this.visitBase(child, camera, desired, requested);
+    }
+
+    /**
+     * Loads a tile of the periphery of the view, and its descendants down to the threshold, without selecting them: a
+     * place that enters the view then finds its tile ready.
+     */
+    private preloadBasePeriphery(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        camera: TCamera,
+        requested: IRuntimeContent<TContentHandle>[],
+    ): void {
+        if (this.adapter.spatial.isInPeriphery?.(node.spatial, camera) !== true) return;
+        node.active = true;
+        this.touchBaseTile(node, camera);
+        // Below every load of the view, whose priorities are errors of zero or more, and in the order of the error.
+        const priority = -1 / (1 + node.screenSpaceError);
+        const potential = node.contents.some(
+            (content) => content.kind === TileContentKind.Unknown || content.kind === TileContentKind.Renderable,
+        );
+        if (potential) this.requestNodeContents(node, priority, requested);
+        if (node.implicit && node.implicit.subtree.status !== TileReadinessState.Ready) {
+            this.requestImplicitSubtree(node, priority);
+            return;
+        }
+        const threshold = this.maxScreenSpaceErrorForDepth?.(node.depth, this.maxScreenSpaceError) ?? this.maxScreenSpaceError;
+        if (potential && node.screenSpaceError <= threshold * Math.max(1, this.refinementThresholdScale?.() ?? 1)) return;
+        this.materializeImplicitChildren(node);
+        for (const child of node.children) this.preloadBasePeriphery(child, camera, requested);
     }
 
     private touchBaseTile(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>, camera: TCamera): void {
@@ -728,50 +760,110 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         requested: IRuntimeContent<TContentHandle>[],
     ): void {
         if (!this.quadtreeBalance) return;
-        const entries = [...desired.values()].flatMap((value) => {
-            const location = value.refinementMode === TileRefinementMode.Replace ? this.quadtreeLocation(value) : undefined;
-            return location ? [{ location, value }] : [];
-        });
+        const displayed = new Set(this.selectedAtFrameStart);
         // Keep the support requested by the desired detail and every ready split performed by this local closure.
-        const support = [...entries];
-        const balanced = refineQuadtreeCut(entries, (coarse) => {
-            this.materializeImplicitChildren(coarse.value);
-            if (coarse.value.children.length === 0) return undefined;
-            const ready = coarse.value.children
-                .map((child) => this.collectBaseReplacementFront(child, camera, requested, BALANCE_LOAD_PRIORITY))
-                .every(Boolean);
-            if (!ready) return undefined;
-            const front: typeof entries = [];
-            const collect = (node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): boolean => {
-                if (!node.visible) return true;
-                if (this.isNodePresentationReady(node)) {
-                    const location = node.refinementMode === TileRefinementMode.Replace ? this.quadtreeLocation(node) : undefined;
-                    if (!location) return false;
-                    front.push({ location, value: node });
-                    return true;
-                }
-                return node.children.map(collect).every(Boolean);
-            };
-            if (!coarse.value.children.map(collect).every(Boolean)) return undefined;
-            support.push(...front);
-            return front;
-        });
-        if (!balanced) {
-            // A new neighbour cannot degrade existing fine geometry. Reject this entire publication until its support is ready.
-            this.retainBaseCut(camera, desired, requested);
-            for (const node of desired.values()) {
-                const location = this.quadtreeLocation(node);
-                if (location) support.push({ location, value: node });
+        const support: Array<IQuadtreeCutTile<IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>> = [];
+        for (;;) {
+            const entries = this.baseQuadtreeEntries(desired);
+            support.push(...entries);
+            const involved = new Set<IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>();
+            const balanced = this.refineBaseQuadtreeCut(camera, entries, support, requested, (tiles) => {
+                for (const { value } of tiles) involved.add(value);
+            });
+            if (balanced) {
+                const kept = new Set(balanced.map(({ value }) => value));
+                for (const { value } of entries) if (!kept.has(value)) desired.delete(value.id);
+                for (const { value } of balanced) this.selectBaseTile(value, desired, requested);
+                break;
             }
-        } else {
-            const kept = new Set(balanced.map(({ value }) => value));
-            for (const { value } of entries) if (!kept.has(value)) desired.delete(value.id);
-            for (const { value } of balanced) this.selectBaseTile(value, desired, requested);
+            // A ready tile is displayable only within one level of its neighbours. A new tile that is not keeps what
+            // was displayed in its place, and the rest of the list goes on.
+            const undisplayable = [...involved].filter((node) => !displayed.has(node));
+            if (undisplayable.length === 0) {
+                // Only displayed tiles are involved: nothing local can wait, the previous list stays.
+                this.retainBaseCut(camera, desired, requested);
+                support.push(...this.baseQuadtreeEntries(desired));
+                break;
+            }
+            for (const node of undisplayable) this.keepDisplayedInPlaceOf(node, displayed, camera, desired, requested);
         }
         const requirements = quadtreeBalanceRefinements(support.map(({ location }) => location));
         if (requirements.size !== this.balanceRefinements.size || [...requirements].some((key) => !this.balanceRefinements.has(key)))
             this.requestFrame();
         this.balanceRefinements = requirements;
+    }
+
+    private baseQuadtreeEntries(
+        desired: ReadonlyMap<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>,
+    ): Array<IQuadtreeCutTile<IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>> {
+        return [...desired.values()].flatMap((value) => {
+            const location = value.refinementMode === TileRefinementMode.Replace ? this.quadtreeLocation(value) : undefined;
+            return location ? [{ location, value }] : [];
+        });
+    }
+
+    private refineBaseQuadtreeCut(
+        camera: TCamera,
+        entries: Array<IQuadtreeCutTile<IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>>,
+        support: Array<IQuadtreeCutTile<IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>>,
+        requested: IRuntimeContent<TContentHandle>[],
+        blocked: (involved: readonly IQuadtreeCutTile<IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>[]) => void,
+    ): Array<IQuadtreeCutTile<IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>> | undefined {
+        return refineQuadtreeCut(
+            entries,
+            (coarse) => {
+                this.materializeImplicitChildren(coarse.value);
+                if (coarse.value.children.length === 0) return undefined;
+                const ready = coarse.value.children
+                    .map((child) => this.collectBaseReplacementFront(child, camera, requested, BALANCE_LOAD_PRIORITY))
+                    .every(Boolean);
+                if (!ready) return undefined;
+                const front: typeof entries = [];
+                const collect = (node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): boolean => {
+                    if (!node.visible) return true;
+                    if (this.isNodePresentationReady(node)) {
+                        const location = node.refinementMode === TileRefinementMode.Replace ? this.quadtreeLocation(node) : undefined;
+                        if (!location) return false;
+                        front.push({ location, value: node });
+                        return true;
+                    }
+                    return node.children.map(collect).every(Boolean);
+                };
+                if (!coarse.value.children.map(collect).every(Boolean)) return undefined;
+                support.push(...front);
+                return front;
+            },
+            blocked,
+        );
+    }
+
+    /**
+     * Gives back the place of a new tile to what was displayed there: the displayed ancestor that it refines, or the
+     * displayed tiles under it that it would coarsen. A place that displayed nothing stays empty until it is ready.
+     */
+    private keepDisplayedInPlaceOf(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        displayed: ReadonlySet<IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>,
+        camera: TCamera,
+        desired: Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>,
+        requested: IRuntimeContent<TContentHandle>[],
+    ): void {
+        let place = node;
+        for (let parent = node.parent; parent; parent = parent.parent) {
+            if (!displayed.has(parent)) continue;
+            place = parent;
+            break;
+        }
+        const within = (tile: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): boolean =>
+            tile === place || this.isDescendantOf(tile, place);
+        for (const tile of [...desired.values()]) if (within(tile)) desired.delete(tile.id);
+        for (const tile of displayed) {
+            if (!within(tile) || !this.isNodePresentationReady(tile)) continue;
+            tile.visible = this.adapter.spatial.isVisible(tile.spatial, camera);
+            tile.active = tile.visible;
+            this.touchBaseTile(tile, camera);
+            this.selectNode(tile, desired, requested);
+        }
     }
 
     private retainBaseCut(
@@ -2138,6 +2230,9 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         const implicit = node.implicit;
         if (!implicit) return;
         const subtree = implicit.subtree;
+        const key = `subtree:${implicit.context.id}:${subtree.coordinates.level}:${subtree.coordinates.x}:${subtree.coordinates.y}:${subtree.coordinates.z ?? 0}`;
+        // A waiting subtree follows the priority of the current frame, like contents: the view outranks its periphery.
+        if (subtree.status === TileReadinessState.Queued) this.followQueuedPriority(key, priority);
         if (
             subtree.status !== TileReadinessState.Idle &&
             subtree.status !== TileReadinessState.Failed &&
@@ -2148,7 +2243,6 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         subtree.status = TileReadinessState.Queued;
         subtree.lastTouchedFrame = this.frame;
         this.events.emit({ type: "subtree-state", tile: node, subtree });
-        const key = `subtree:${implicit.context.id}:${subtree.coordinates.level}:${subtree.coordinates.x}:${subtree.coordinates.y}:${subtree.coordinates.z ?? 0}`;
         this.scheduler.enqueue(key, priority, async (signal) => {
             const startedAt = this.startTiming();
             subtree.status = TileReadinessState.Preparing;
