@@ -564,3 +564,22 @@ All paths on both engines, one run: grids of 64 cells, threshold of 10 pixels fo
 - **Renderers:** `npm run compare:renderers` gives the figures of T27 on the 16 cases, within 7 pixels in wireframe.
 - **Places:** `place=yosemite`, 4 s on both engines in WebGL: 0 m, holes on 2 frames in motion, 31 and 82 pixels at worst. The Google example loads 274 tiles without error.
 - **Not solved:** the holes while zooming of T24 to T26 remain, in their range. Frame rates are not compared with T26: the Browser pane drew the example during this run.
+
+### experimental/cube after the merge of main, 2026-11-13
+
+#### T29. The cube on the selection of #32, and the Moon from R2
+
+- **Failed, in the merge:** git applied without conflict the removal of the runtime cube source by #32, and the check of core passed without it. Kept: `cube-source.ts`, its export and its 14 tests, which pass on the new selection.
+- **Failed, in the Browser pane:** hidden, it suspends `requestAnimationFrame`, and the Mercator frame loop of #18 then never draws: 64 tiles pending, 0 ready, no request. Measure with the bench, in headless Chrome.
+- **Failed, on R2:** the descriptors of the bucket hold relative templates, `./elevation/{face}/{z}/{x}/{y}.png`, which the local server made absolute. Kept: the example resolves a relative template against its descriptor.
+- **Measured, `mont-blanc/mesh`, 4 s, three runs on the merge and two on main before the migration (core `75a99c2`, Babylon `863c75c`), served side by side:** holes in motion of 2 328 to 2 497 pixels on the merge, 2 164 and 2 175 on main, loads of 21 to 30 s on both. The merge does not cause them; T28 measured 8 s paths.
+- **Measured, the Moon of R2, revision `99bcf7766dc093ba0f2f`, GPU, 4 s, one run:** tiles load, no hole, and 0 m between shared vertices in the view and at rest. Between vertices anywhere, 25.6 m on `plain` and 54.1 m on `pole`, not examined.
+
+| Path             | FPS   | Requests | Load s | Holes | Edge m, view | Edge m, all |
+| ---------------- | ----- | -------- | ------ | ----- | ------------ | ----------- |
+| `plain/gpu`      | 77.5  | 232      | 24.8   | 0     | 0            | 25.6        |
+| `pole/gpu`       | 103.4 | 380      | 26     | 0     | 0            | 54.1        |
+| `cap-border/gpu` | 109.5 | 315      | 12.5   | 0     | 0            | 0           |
+
+- **Synthetic Moon:** `plain` and `face-edge`, both engines, 4 s: no hole, 0 m on the GPU, 0.015 m on the mesh engine of `plain`.
+- **Renderers:** on the cube, the GPU engine runs its GLSL converted by Babylon on WebGPU; `plain/gpu` differs from WebGL by 22 pixels.
