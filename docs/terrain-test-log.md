@@ -583,3 +583,20 @@ All paths on both engines, one run: grids of 64 cells, threshold of 10 pixels fo
 
 - **Synthetic Moon:** `plain` and `face-edge`, both engines, 4 s: no hole, 0 m on the GPU, 0.015 m on the mesh engine of `plain`.
 - **Renderers:** on the cube, the GPU engine runs its GLSL converted by Babylon on WebGPU; `plain/gpu` differs from WebGL by 22 pixels.
+
+#### T30. The depth of the terrain from the availability of the dataset, and Mars
+
+- **Failed, in the grafts:** the terrain of a dataset was a global `maxLOD`, the DEM levels held everywhere plus the levels below a DEM tile, and subtrees grafted at the roots the dataset declares. A graft replaces a tile the tree already reaches, so a region starting more than one level below the global depth was never reached. The Moon passed by chance, Shackleton from level 7 under a terrain of 8; Mars did not, Jezero from level 7 under a terrain of 6 (MOLA to 4, plus 2): over Jezero, 51 tiles to level 6, all reading the DEM of level 4. Re-rooting the grafts at level 6 was rejected: it refines a whole tile of level 6 outside the data.
+- **Kept:** the cube source writes the availability of each tile in its virtual implicit subtrees, from `isAvailable`. A terrain tile exists where the dataset reaches, somewhere within it, the DEM level its cells sample: `CelestialTileSource.deepestLevelWithin`, which never decreases from a tile to its parent. The grafts of the cube are gone.
+- **Measured, one run each, GPU, headless Chrome, imagery off, R2 datasets:** 0 pending and 0 unbalanced edges at rest, no error.
+
+| View                           | Terrain levels drawn | DEM levels read |
+| ------------------------------ | -------------------- | --------------- |
+| Mars, Jezero, 40 km            | 4 to 9               | 4, 7 to 9       |
+| Mars, Jezero, 4 km             | 4 to 13              | 4, 7 to 13      |
+| Mars, whole body               | 0 to 1               | 0 to 1          |
+| Moon, Shackleton, 30 km        | 4 to 9               | 4 to 9          |
+| Moon, away from the cap, 40 km | 4 to 8               | 4 to 6          |
+| Synthetic Moon, 40 km          | 4 to 8               | none, synthetic |
+
+- **Not measured:** frame rates and holes in motion with the bench, and Mars on WebGPU.

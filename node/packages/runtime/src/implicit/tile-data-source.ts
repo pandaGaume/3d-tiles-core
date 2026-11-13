@@ -44,6 +44,11 @@ export interface ITileDataSource {
 export interface IImplicitTilesetDecoratorOptions {
     subtreeLevels?: number;
     refine?: "ADD" | "REPLACE";
+    /**
+     * Template of the URIs of the availability subtrees, with `{level}`, `{x}` and `{y}`. Defaults to
+     * `virtual-subtrees/{level}/{x}/{y}.subtree`. Pyramids whose subtrees differ need a template each.
+     */
+    subtreesUri?: string;
 }
 
 function implicitTemplate(template: string): string {
@@ -96,7 +101,7 @@ export class ImplicitTilesetDecorator implements IImplicitTileResolver {
                     subtreeLevels,
                     availableLevels: metrics.maxLOD - metrics.minLOD + 1,
                     subtrees: {
-                        uri: "virtual-subtrees/{level}/{x}/{y}.subtree",
+                        uri: options.subtreesUri ?? "virtual-subtrees/{level}/{x}/{y}.subtree",
                     },
                 },
             },

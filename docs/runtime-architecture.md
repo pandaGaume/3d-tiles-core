@@ -247,7 +247,7 @@ The runtime source of a whole body on the [cube index](celestial-tiling.md), `cr
 - Tiles carry oriented `box` bounding volumes, since a `region` cannot describe a polar face. The box follows the measured height range of the tile once known. Culling, picking and screen-space error use this box, and the index footprint of a tile is only used for addressing.
 - The geometric error of a tile comes from the length of its edges on the reference surface.
 - Implicit coordinates map directly to the address on the face: `x` and `y` grow like the tile axes, whatever the scheme of the source.
-- Subtrees with their own levels, such as the polar caps of the Moon, register at their address like the other implicit subtrees.
+- The depth of a body varies from place to place, as the polar caps of the Moon or Jezero on Mars. `isAvailable` tells which tiles the pyramid holds, and must hold the parent of every tile it holds; `maxLOD` is the deepest level anywhere. The source writes that availability into the bits of virtual implicit subtrees, one subtree URI template per quadtree, through its own `IImplicitSubtreeLoader`, which the adapter takes as its subtree loader. A region deeper than the levels held everywhere is reached through its ancestors, wherever it starts, and no tile is available outside it.
 - Quadtree balance follows the topology of the index: the neighbour across a face edge may be turned, and edges of two faces balance like any other.
 
 ## Base selection for runtime owned geometry

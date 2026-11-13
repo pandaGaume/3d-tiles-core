@@ -10,7 +10,9 @@ import { describe, expect, it } from "vitest";
 
 import {
     CubeTileDataSource,
+    LoadedSubtreeAvailability,
     createCubeImplicitSource,
+    expandImplicitTemplate,
     cubeTileBoundingBox,
     quadtreeBalanceRefinements,
     quadtreeImbalances,
@@ -132,19 +134,83 @@ describe("createCubeImplicitSource", () => {
         expect(tileset.root.children).toHaveLength(24);
     });
 
-    it("registers subtrees with their own levels at their address", () => {
-        const root = { face: 5, lod: 2, x: 1, y: 2 };
-        const { tileset, resolver } = createCubeImplicitSource({
-            surface: MOON,
-            maxLOD: 7,
-            urlTemplates: "cube://{face}/{z}/{x}/{y}",
-            subtrees: [{ root, maxLOD: 11 }],
+    /** Loads the subtree of a face at the given coordinates, and reads its availability. */
+    const subtree = async (source: ReturnType<typeof createCubeImplicitSource>, face: number, level = 0, x = 0, y = 0) => {
+        const root = source.tileset.root.children![face]!;
+        const implicitTiling = root.implicitTiling!;
+        const uri = expandImplicitTemplate(implicitTiling.subtrees.uri, { level, x, y });
+        const loaded = await source.subtrees.load({
+            uri: `memory://grid/${uri}`,
+            documentUri: "memory://grid/tileset.json",
+            coordinates: { level, x, y },
+            implicitTiling,
+            contentCount: 1,
+            signal: new AbortController().signal,
         });
-        const south = tileset.root.children![5]!;
-        const graft = resolver.subtreeAt?.(context(south, 2, 1, 2));
-        expect(graft?.tile.implicitTiling?.availableLevels).toBe(10);
-        expect(resolver.subtreeAt?.(context(south, 2, 2, 2))).toBeUndefined();
-        expect(resolver.addressOf?.(context(graft!.tile, 1, 1, 0))).toEqual({ face: 5, lod: 3, x: 3, y: 4 });
+        return { loaded, availability: new LoadedSubtreeAvailability(loaded, implicitTiling) };
+    };
+
+    it("makes a tile available where the pyramid holds it, deeper than elsewhere where it goes deeper", async () => {
+        // A refinement on face 5 from level 3, deeper than the 2 levels held everywhere, as Jezero below Mars.
+        const refined = { face: 5, lod: 3, x: 5, y: 2 };
+        const holds = (address: ITileAddress & { face: number }): boolean => {
+            if (address.lod <= 2) return true;
+            const shift = address.lod - refined.lod;
+            return (
+                address.face === refined.face &&
+                shift >= 0 &&
+                Math.floor(address.x / 2 ** shift) === refined.x &&
+                Math.floor(address.y / 2 ** shift) === refined.y
+            );
+        };
+        const source = createCubeImplicitSource({
+            surface: MOON,
+            maxLOD: 6,
+            subtreeLevels: 3,
+            urlTemplates: "cube://{face}/{z}/{x}/{y}",
+            isAvailable: holds,
+        });
+        const south = await subtree(source, 5);
+        expect(south.availability.isTileAvailable({ level: 2, x: 2, y: 1 })).toBe(true);
+        // The child subtree rooted at the refinement, and none beside it.
+        expect(south.availability.isChildSubtreeAvailable({ level: 3, x: 5, y: 2 })).toBe(true);
+        expect(south.availability.isChildSubtreeAvailable({ level: 3, x: 4, y: 2 })).toBe(false);
+        const deeper = await subtree(source, 5, 3, 5, 2);
+        expect(deeper.availability.isTileAvailable({ level: 0, x: 0, y: 0 })).toBe(true);
+        expect(deeper.availability.isTileAvailable({ level: 2, x: 3, y: 1 })).toBe(true);
+        expect(deeper.availability.isContentAvailable(0, { level: 2, x: 3, y: 1 })).toBe(true);
+        // Another face stops at the levels held everywhere.
+        const north = await subtree(source, 4);
+        expect(north.availability.isTileAvailable({ level: 2, x: 3, y: 3 })).toBe(true);
+        expect(north.availability.isChildSubtreeAvailable({ level: 3, x: 0, y: 0 })).toBe(false);
+        expect(source.dataSources[5]!.addressOf({ level: 3, x: 5, y: 2 })).toEqual(refined);
+    });
+
+    it("holds every tile down to the deepest level without availability, as constants", async () => {
+        const source = createCubeImplicitSource({ surface: MOON, maxLOD: 3, subtreeLevels: 2, urlTemplates: "cube://{face}/{z}/{x}/{y}" });
+        const { loaded, availability } = await subtree(source, 2);
+        expect(loaded.subtree.tileAvailability).toEqual({ constant: 1 });
+        expect(loaded.subtree.childSubtreeAvailability).toEqual({ constant: 1 });
+        expect(loaded.buffers).toBeUndefined();
+        const last = await subtree(source, 2, 2, 1, 3);
+        expect(last.availability.isTileAvailable({ level: 1, x: 1, y: 1 })).toBe(true);
+        expect(last.loaded.subtree.childSubtreeAvailability).toEqual({ constant: 0 });
+        expect(availability.isTileAvailable({ level: 1, x: 1, y: 0 })).toBe(true);
+    });
+
+    it("rejects a subtree that belongs to no quadtree of the source", async () => {
+        const source = createCubeImplicitSource({ surface: MOON, maxLOD: 3, urlTemplates: "cube://{face}/{z}/{x}/{y}" });
+        const implicitTiling = source.tileset.root.children![0]!.implicitTiling!;
+        await expect(
+            source.subtrees.load({
+                uri: "memory://grid/virtual-subtrees/0/0/0.subtree",
+                documentUri: "memory://grid/tileset.json",
+                coordinates: { level: 0, x: 0, y: 0 },
+                implicitTiling,
+                contentCount: 1,
+                signal: new AbortController().signal,
+            }),
+        ).rejects.toThrow("is not a subtree of this cube source");
     });
 
     it("bounds tiles with their measured height range", () => {
