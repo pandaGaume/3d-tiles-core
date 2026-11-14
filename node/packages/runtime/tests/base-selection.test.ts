@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 const FIXTURE_SYSTEM = FixtureGeodeticSystem.WGS84;
 
 import type { IContentLoadContext, IRuntimeAdapter, ISpatialDerivationContext, ISpatialMetric } from "../src";
-import { DenseImplicitSubtreeLoader, TileRuntime, createWebMapImplicitSource, quadtreeImbalances, refineQuadtreeCut } from "../src";
+import { DenseImplicitSubtreeLoader, TileRuntime, quadtreeImbalances, refineQuadtreeCut } from "../src";
+import { createQuadtreeSource } from "./fixtures/quadtree-source";
 
 interface ICamera {
     focus?: number;
@@ -257,7 +258,7 @@ describe("TileRuntime base selection", () => {
 });
 
 function implicitRuntime(delayed?: (address: { lod: number; x: number; y: number }) => Promise<void> | undefined) {
-    const source = createWebMapImplicitSource({
+    const source = createQuadtreeSource({
         geodeticSystem: FIXTURE_SYSTEM,
         urlTemplates: "grid://{z}/{x}/{y}",
         maximumZoom: 4,

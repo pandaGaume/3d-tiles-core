@@ -13,7 +13,6 @@ import type {
     ISpatialMetric,
 } from "../src";
 import {
-    createWebMapImplicitSource,
     DenseImplicitSubtreeLoader,
     implicitAvailabilityIndex,
     implicitMortonIndex,
@@ -22,6 +21,7 @@ import {
     subdivideImplicitBoundingVolume,
     TileRuntime,
 } from "../src";
+import { createQuadtreeSource } from "./fixtures/quadtree-source";
 
 interface ICamera {
     multiplier: number;
@@ -231,7 +231,7 @@ describe("TileRuntime implicit traversal", () => {
     });
 
     it("adapts an XYZ Web Mercator DEM pyramid and exposes coordinates to the terrain adapter", async () => {
-        const source = createWebMapImplicitSource({
+        const source = createQuadtreeSource({
             geodeticSystem: FIXTURE_SYSTEM,
             urlTemplates: "https://dem.example.test/{z}/{x}/{y}.png",
             maximumZoom: 1,
@@ -274,7 +274,7 @@ describe("TileRuntime implicit traversal", () => {
     });
 
     it("re-resolves child bounds from parent content, except for children with measured content bounds", async () => {
-        const source = createWebMapImplicitSource({
+        const source = createQuadtreeSource({
             geodeticSystem: FIXTURE_SYSTEM,
             urlTemplates: "https://dem.example.test/{z}/{x}/{y}.png",
             maximumZoom: 1,
@@ -366,7 +366,7 @@ describe("TileRuntime implicit traversal", () => {
     });
 
     it("releases inactive implicit branches and subtrees, then materializes them again", async () => {
-        const source = createWebMapImplicitSource({
+        const source = createQuadtreeSource({
             geodeticSystem: FIXTURE_SYSTEM,
             urlTemplates: "https://dem.example.test/{z}/{x}/{y}.png",
             maximumZoom: 2,

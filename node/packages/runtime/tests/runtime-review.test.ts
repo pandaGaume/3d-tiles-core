@@ -8,11 +8,11 @@ import {
     DenseImplicitSubtreeLoader,
     TileReadinessState,
     TileRuntime,
-    createWebMapImplicitSource,
     type IRuntimeAdapter,
     type ISpatialDerivationContext,
     type ITileActivationContext,
 } from "../src";
+import { createQuadtreeSource } from "./fixtures/quadtree-source";
 
 interface ICamera {
     hidden?: readonly string[];
@@ -182,7 +182,7 @@ describe("TileRuntime queued priorities", () => {
 
 describe("TileRuntime implicit materialization", () => {
     function createImplicit(maxMaterializedTiles: number, satisfiedDepth = 3) {
-        const source = createWebMapImplicitSource({
+        const source = createQuadtreeSource({
             geodeticSystem: FIXTURE_SYSTEM,
             urlTemplates: "grid://{z}/{x}/{y}",
             maximumZoom: 8,

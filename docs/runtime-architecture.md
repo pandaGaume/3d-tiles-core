@@ -149,9 +149,9 @@ Implicit tiling is implemented as a native traversal path, not as a pre-generate
 
 ### Web Map and DEM pyramids
 
-`ITileDataSource` defines the physical pyramid. It owns its `ITileMetrics`, absolute root address, URL templates and metadata policy. `WebMapTileDataSource` implements that contract for XYZ or TMS, while `WebMercatorTileMetrics` provides addressing, ground resolution and the authoritative `minLOD` and `maxLOD` bounds.
+`ITileDataSource` defines the physical pyramid. It owns its `ITileMetrics`, absolute root address, URL templates and metadata policy. `WebMapTileDataSource` of `@spacexr/terrain-tileset` (terrain-core) implements that contract for XYZ or TMS, while `WebMercatorTileMetrics` of `@spacexr/tiles` provides addressing, ground resolution and the authoritative `minLOD` and `maxLOD` bounds. The runtime holds no tiling scheme of its own.
 
-`ImplicitTilesetDecorator` is deliberately limited to representation. It exposes a data source as a standard implicit 3D Tiles tileset and delegates per-tile resolution back to the source. Its `availableLevels` is derived as `maxLOD - minLOD + 1`, so traversal cannot materialize a source LOD beyond its declared range. `createWebMapImplicitSource` is a convenience factory for this source-plus-decorator composition.
+`ImplicitTilesetDecorator` is deliberately limited to representation. It exposes a data source as a standard implicit 3D Tiles tileset and delegates per-tile resolution back to the source. Its `availableLevels` is derived as `maxLOD - minLOD + 1`, so traversal cannot materialize a source LOD beyond its declared range. `createWebMapImplicitSource`, in `@spacexr/terrain-tileset`, is a convenience factory for this source-plus-decorator composition.
 
 This spatial override matters because standard 3D Tiles `region` subdivision is linear in latitude, while Web Mercator tile rows are not. The source and decorator keep 3D Tiles availability and traversal semantics while supplying the exact per-tile `TILE_BOUNDING_REGION` equivalent at runtime.
 
@@ -242,7 +242,7 @@ The generic runtime owns traversal, availability and resource lifecycle. Web til
 
 ## Cube tilesets
 
-The runtime source of a whole body on the [cube index](../../spacexr-rendering/docs/architecture.md), `createCubeImplicitSource`, is on the `experimental/cube` branch until it is validated. The cube addressing, its topology and the reprojection of `@spacexr/tiles` stay here.
+The source of a whole body on the cube index, `createCubeImplicitSource`, is in `@spacexr/terrain-tileset` (terrain-core). The cube addressing, its topology and the reprojection are in `@spacexr/tiles` (spacexr-tiling). The runtime only decorates and traverses them.
 
 ## Base selection for runtime owned geometry
 
