@@ -5,10 +5,9 @@ Renderer-neutral contracts and the single SpaceXR 3D Tiles runtime, shared by te
 | Package | Responsibility |
 | --- | --- |
 | `@spacexr/3d-tiles-core` | Immutable wire model, JSON codecs, validation and extensions |
-| `@spacexr/tiles` | Addresses, configurable topology, generic pyramids, HTTP sources and reprojection |
 | `@spacexr/3d-tiles-runtime` | Traversal, selection, availability, streaming, caches and presentation lifecycle |
 
-The repository keeps `node/`, `conformance/`, cross-language `docs/`, and the reserved `dotnet/` and `cpp/` directories. The runtime never adds mutable state or scene objects to serialized documents. Ellipsoids and coordinate transforms remain in `@spacexr/geodesy`.
+The repository keeps `node/`, `conformance/`, cross-language `docs/`, and the reserved `dotnet/` and `cpp/` directories. The runtime never adds mutable state or scene objects to serialized documents. Ellipsoids and coordinate transforms remain in `@spacexr/geodesy`. Tile addressing, topologies and tiling schemes come from `@spacexr/tiles` in [spacexr-tiling](../spacexr-tiling/README.md).
 
 ## Framework repositories
 
