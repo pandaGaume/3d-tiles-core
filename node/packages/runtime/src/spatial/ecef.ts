@@ -16,6 +16,7 @@ import { placeVertically, type IVerticalPlacement } from "./vertical-scale";
 import { boundsFromUtm } from "./utm-bounds";
 import type { IUtmPlacementOptions } from "./utm-types";
 import { matrixOf, maximumScale, multiplyTransforms, vectorLength } from "./matrix";
+import { metresPerPixel, type IProjectionFallback } from "./view-metrics";
 
 const DEFAULT_VIEWPORT_HEIGHT = 1080;
 const DEFAULT_VERTICAL_FOV_RADIANS = Math.PI / 3;
@@ -36,6 +37,8 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
     private lowestUnscaledHeight = 0;
     private readonly defaultViewportHeight: number;
     private readonly defaultVerticalFovRadians: number;
+    /** Viewport height and field of view used when a camera frame does not give them. */
+    public readonly projectionFallback: Readonly<IProjectionFallback>;
     private readonly utmOptions: IUtmPlacementOptions;
     private readonly vertical: IVerticalPlacement | undefined;
 
@@ -52,6 +55,7 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
         this.defaultVerticalFovRadians = options.defaultVerticalFovRadians ?? DEFAULT_VERTICAL_FOV_RADIANS;
         this.utmOptions = options.utm ?? {};
         this.vertical = options.vertical;
+        this.projectionFallback = { viewportHeight: this.defaultViewportHeight, verticalFovRadians: this.defaultVerticalFovRadians };
 
         if (!Number.isFinite(this.defaultViewportHeight) || this.defaultViewportHeight <= 0) {
             throw new RangeError("The default viewport height must be a positive finite number.");
@@ -190,9 +194,8 @@ export class EcefSpatialMetric implements ISpatialMetric<IEcefCameraFrame, IEcef
                   Number.EPSILON,
               )
             : Math.max(vectorLength(camera.position), Number.EPSILON);
-        const viewportHeight = camera.viewportHeight > 0 ? camera.viewportHeight : this.defaultViewportHeight;
-        const tanHalfVerticalFov = camera.tanHalfVerticalFov ?? Math.tan((camera.verticalFovRadians ?? this.defaultVerticalFovRadians) / 2);
-        if (!Number.isFinite(tanHalfVerticalFov) || tanHalfVerticalFov <= 0) return Number.POSITIVE_INFINITY;
-        return (context.spatial.geometricError * viewportHeight) / (2 * tanHalfVerticalFov * distance);
+        const perPixel = metresPerPixel(camera, distance, this.projectionFallback);
+        if (!(perPixel > 0)) return Number.POSITIVE_INFINITY;
+        return context.spatial.geometricError / perPixel;
     }
 }

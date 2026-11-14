@@ -53,6 +53,8 @@ export interface IEcefCameraFrame {
     verticalFovRadians?: number;
     /** Precomputed tangent of half the vertical field of view. */
     tanHalfVerticalFov?: number;
+    /** Optional unit direction of the view in ECEF, for orientation and scale displays. Selection does not read it. */
+    forward?: IVector3;
     /** Optional normalized ECEF frustum planes. */
     frustumPlanes?: readonly IPlane[];
     /** Optional wider ECEF planes around the view: a tile between them and {@link frustumPlanes} is in the periphery. */
