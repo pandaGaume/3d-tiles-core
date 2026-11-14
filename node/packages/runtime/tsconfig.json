@@ -18,8 +18,8 @@
         "paths": {
             "@spacexr/3d-tiles-core": ["../core/src/index.ts"],
             "@spacexr/3d-tiles-core/*": ["../core/src/*"],
-            "@spacexr/tiles": ["../tiles/src/index.ts"],
-            "@spacexr/tiles/*": ["../tiles/src/*"]
+            "@spacexr/tiles": ["../../../../spacexr-tiling/packages/tiles/src/index.ts"],
+            "@spacexr/tiles/*": ["../../../../spacexr-tiling/packages/tiles/src/*"]
         },
         "types": ["node", "vitest/globals"]
     },

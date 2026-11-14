@@ -16,7 +16,7 @@ on:
 
 defaults:
   run:
-    working-directory: node
+    working-directory: 3d-tiles-core/node
 
 jobs:
   build:
@@ -26,11 +26,22 @@ jobs:
         node-version: [20.x]
     steps:
       - uses: actions/checkout@v7
+        with:
+          path: 3d-tiles-core
+      - uses: actions/checkout@v7
+        with:
+          repository: pandaGaume/spacexr-tiling
+          path: spacexr-tiling
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
-          cache-dependency-path: node/package-lock.json
+          cache-dependency-path: 3d-tiles-core/node/package-lock.json
+      - name: Build spacexr-tiling
+        working-directory: spacexr-tiling
+        run: |
+          npm ci
+          npm run build
       - run: npm ci
       - run: npm run format
       - run: npm run lint

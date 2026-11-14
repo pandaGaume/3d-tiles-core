@@ -11,9 +11,11 @@
     },
     "workspaces": [
         "packages/core",
-        "packages/tiles",
         "packages/runtime"
     ],
+    "dependencies": {
+        "@spacexr/tiles": "file:../../spacexr-tiling/packages/tiles"
+    },
     "overrides": {
         "esbuild": "0.28.2"
     },
