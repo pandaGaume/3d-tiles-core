@@ -1,6 +1,6 @@
 import type { IBoundingVolume, IContent, IMetadataEntity, ITileset } from "@spacexr/3d-tiles-core";
 
-import type { ITileMetrics } from "./metrics";
+import type { ITileMetrics } from "@spacexr/tiles";
 import type {
     IImplicitCoordinates,
     IImplicitTileAddressContext,

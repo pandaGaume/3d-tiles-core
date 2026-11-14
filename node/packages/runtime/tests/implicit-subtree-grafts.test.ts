@@ -10,7 +10,9 @@ import type {
     ISpatialMetric,
     ITileAddress,
 } from "../src";
-import { DenseImplicitSubtreeLoader, TileRuntime, WebMercatorTileMetrics, createWebMapImplicitSource } from "../src";
+import { DenseImplicitSubtreeLoader, TileRuntime } from "../src";
+import { WebMercatorTileMetrics } from "@spacexr/tiles";
+import { createQuadtreeSource } from "./fixtures/quadtree-source";
 
 interface ISpatial {
     region: readonly number[];
@@ -35,7 +37,7 @@ const same = (left: ITileAddress, right: ITileAddress): boolean => left.lod === 
 
 /** A subtree source rooted at an address, with its own levels and content template. */
 function subtreeSource(root: ITileAddress, maxLOD: number) {
-    return createWebMapImplicitSource({
+    return createQuadtreeSource({
         geodeticSystem: FIXTURE_SYSTEM,
         id: "custom",
         urlTemplates: "custom://{z}/{x}/{y}",
@@ -50,7 +52,7 @@ async function selectedUris(
     maxLOD: number,
     graft?: { at: ITileAddress; maxLOD: number; subtrees?: IImplicitSubtreeLoader },
 ): Promise<string[]> {
-    const base = createWebMapImplicitSource({
+    const base = createQuadtreeSource({
         geodeticSystem: FIXTURE_SYSTEM,
         urlTemplates: "base://{z}/{x}/{y}",
         metrics: new WebMercatorTileMetrics({ minLOD: 0, maxLOD }, FIXTURE_SYSTEM),

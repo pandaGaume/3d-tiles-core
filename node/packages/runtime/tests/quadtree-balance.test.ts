@@ -3,13 +3,8 @@ import { describe, expect, it } from "vitest";
 const FIXTURE_SYSTEM = FixtureGeodeticSystem.WGS84;
 
 import type { IContentLoadContext, IRuntimeAdapter, ISpatialDerivationContext, ISpatialMetric } from "../src";
-import {
-    DenseImplicitSubtreeLoader,
-    TileRuntime,
-    createWebMapImplicitSource,
-    quadtreeBalanceRefinements,
-    quadtreeImbalances,
-} from "../src";
+import { DenseImplicitSubtreeLoader, TileRuntime, quadtreeBalanceRefinements, quadtreeImbalances } from "../src";
+import { createQuadtreeSource } from "./fixtures/quadtree-source";
 
 describe("quadtreeBalanceRefinements", () => {
     it("refines every ancestor of an edge neighbour two or more levels coarser", () => {
@@ -95,7 +90,7 @@ function createScenario(
     coarseningDelayMilliseconds = 0,
     clock?: () => number,
 ) {
-    const source = createWebMapImplicitSource({
+    const source = createQuadtreeSource({
         geodeticSystem: FIXTURE_SYSTEM,
         urlTemplates: "grid://{z}/{x}/{y}",
         maximumZoom: 3,
