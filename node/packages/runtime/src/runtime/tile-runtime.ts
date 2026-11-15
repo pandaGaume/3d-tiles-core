@@ -172,12 +172,6 @@ export interface IQuadtreeBalanceOptions {
     wrapX?: boolean;
     /** How addresses from `IImplicitTileResolver.addressOf` connect, for example across configured local frames, in place of `wrapX`. */
     topology?: ITileTopology;
-    /**
-     * A tile the balance must refine, whose children are not ready, keeps its displayed descendants only when they cover
-     * every visible part of it; otherwise it falls back to a ready tile. Defaults to false: it keeps any displayed
-     * descendant, even one covering a corner of it, and the rest stays empty until the children load.
-     */
-    fillGaps?: boolean;
 }
 
 interface IContentCacheEntry<TSpatial, TContentHandle, TGlyphHandle> {
@@ -294,7 +288,6 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
                   ...(typeof options.quadtreeBalance === "object" && options.quadtreeBalance.topology
                       ? { topology: options.quadtreeBalance.topology }
                       : {}),
-                  ...(typeof options.quadtreeBalance === "object" && options.quadtreeBalance.fillGaps ? { fillGaps: true } : {}),
               }
             : undefined;
         this.maxLoadAttempts = Math.max(1, Math.floor(options.maxLoadAttempts ?? 3));
@@ -973,11 +966,11 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             // A refinement required by the quadtree balance keeps the finer
             // descendants already displayed: falling back to a coarser ready
             // tile would display it next to a tile two or more levels finer.
-            // With `fillGaps`, unless they leave part of the tile empty, which is worse than an edge waiting for its balance.
+            // Unless they leave part of the tile empty, which is worse than an edge waiting for its balance.
             if (
                 balanceRequested &&
                 this.stableReplacementCut &&
-                (!this.quadtreeBalance?.fillGaps || this.selectedDescendantsCover(node, camera)) &&
+                this.selectedDescendantsCover(node, camera) &&
                 this.retainVisibleSelectedDescendants(node, camera, desired)
             )
                 return;

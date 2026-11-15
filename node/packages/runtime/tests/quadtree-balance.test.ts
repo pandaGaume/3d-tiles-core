@@ -84,7 +84,7 @@ function largestEdgeJump(tiles: ReadonlyArray<{ lod: number; x: number; y: numbe
 
 /** Runtime focusing just west of the prime meridian, so that the deepest tiles touch the eastern half of the map. */
 function createScenario(
-    quadtreeBalance: boolean | { fillGaps: boolean },
+    quadtreeBalance: boolean,
     delayed?: (address: { lod: number; x: number; y: number }) => Promise<void> | undefined,
     preloadSiblings = false,
     coarseningDelayMilliseconds = 0,
@@ -177,7 +177,7 @@ describe("TileRuntime quadtree balance", () => {
 
 describe("TileRuntime quadtree balance while turning", () => {
     /** The whole of a tile enters the view while most of its children load; gives the smallest area covered meanwhile. */
-    async function coveredWhileLoading(quadtreeBalance: boolean | { fillGaps: boolean }): Promise<number> {
+    async function coveredWhileLoading(quadtreeBalance: boolean): Promise<number> {
         let release: () => void = () => undefined;
         const gate = new Promise<void>((resolve) => (release = resolve));
         // The north-western tile N of level 1 has children A, its north-western one, and three others that never loaded.
@@ -219,12 +219,8 @@ describe("TileRuntime quadtree balance while turning", () => {
         return smallest;
     }
 
-    it("leaves no empty area with fillGaps, when the refinements it keeps do not cover the tile the balance refines", async () => {
-        expect(await coveredWhileLoading({ fillGaps: true })).toBe(1);
-    });
-
-    it("keeps the refinements it displays by default, even when they do not cover the tile", async () => {
-        expect(await coveredWhileLoading(true)).toBeLessThan(1);
+    it("leaves no empty area when the refinements it keeps do not cover the tile the balance refines", async () => {
+        expect(await coveredWhileLoading(true)).toBe(1);
     });
 
     it("keeps a displayed refinement when a neighbour it cannot follow comes into view", async () => {
