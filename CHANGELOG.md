@@ -22,6 +22,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Added
 
+- `describeView` and `metresPerPixel` of the runtime: the position, height over the reference and altitude over the ground of a camera, and the metres one pixel spans at a distance, for scale and altitude displays. `EcefSpatialMetric` computes its screen-space error with `metresPerPixel`, and exposes `projectionFallback`.
 - `refinementThresholdScale` of `TileRuntime` holds back new refinements, for example while a camera moves fast, without coarsening tiles already refined or delaying what the quadtree balance requires, and `requestFrame` asks for a frame when the camera is still.
 - `docs/terrain-pipeline.md`, the proposal realigning the renderers on `docs/grid.md`, and `docs/terrain-test-log.md`, which records what was tried, what failed and what not to try again, with raw reports in `docs/terrain-tests`.
 - Elevation whose depth varies from place to place: `servingLevel` of `CelestialTileSource`, `TilePyramid` and `RasterPyramid`, and `terrainDataLevel` of `DrapeInstanceCut`. `cubeDemPyramid` reads a sub-area of the deepest tile at each place instead of interpolating the levels a dataset does not declare, and `isAvailable` no longer scans its subtrees.
