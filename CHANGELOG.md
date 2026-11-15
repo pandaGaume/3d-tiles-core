@@ -14,6 +14,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Fixed
 
+- Holes while the view moves on a balanced quadtree: a tile the balance must refine, whose children are not ready, kept any displayed descendant, even one covering a corner of it, and the rest stayed empty until the children loaded. It now keeps them only when they cover the visible part of the tile, and falls back to a ready tile otherwise, on every tiling. The `quadtreeBalance.fillGaps` option, which enabled this on the cube index only, is removed: it is how the balance works.
 - `TilePyramid.load`, `RasterPyramid.load` and `DemPyramid.tileHeights` take a signal: a request withdraws, and a load nobody else waits for is aborted down to its HTTP request, after `abortDelayMilliseconds` so that a tile coming back right away does not load twice.
 - A cancelled activation gives its load slot back at once, and its tile loads again when it returns, without a camera motion.
 - A waiting load follows the priority of the current frame, up or down.
