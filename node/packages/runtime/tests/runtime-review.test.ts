@@ -254,7 +254,7 @@ describe("TileRuntime implicit materialization", () => {
 });
 
 describe("TileRuntime coarsening delay", () => {
-    function createDelayed() {
+    function createDelayed(rootContent?: Promise<void>) {
         let now = 0;
         const hierarchy = {
             asset: { version: "1.1" },
@@ -275,7 +275,10 @@ describe("TileRuntime coarsening delay", () => {
                 screenSpaceError: ({ spatial, camera }) => spatial.error * (camera.multiplier ?? 1),
             },
             content: {
-                load: async (context) => ({ kind: "renderable", handle: context.uri }),
+                load: async (context) => {
+                    if (context.uri === "grid://root") await rootContent;
+                    return { kind: "renderable", handle: context.uri };
+                },
                 attach: () => undefined,
                 detach: () => undefined,
             },
@@ -337,6 +340,37 @@ describe("TileRuntime coarsening delay", () => {
         await runtime.processFrame();
         expect(selected()).toEqual(["delay/root"]);
         expect(runtime.hasPendingWork).toBe(false);
+        await runtime.dispose();
+    });
+
+    it("coarsens as soon as a cold parent is ready after the delay expired", async () => {
+        let releaseRoot!: () => void;
+        const { runtime, selected, at } = createDelayed(new Promise<void>((resolve) => (releaseRoot = resolve)));
+        const settle = async () => {
+            for (let tick = 0; tick < 10; tick++) await Promise.resolve();
+        };
+        await runtime.update({ multiplier: 1 });
+        await settle();
+        await runtime.update({ multiplier: 1 });
+        await settle();
+        await runtime.update({ multiplier: 1 });
+        expect(selected()).toEqual(["delay/root/0"]);
+
+        at(100);
+        await runtime.update({ multiplier: 0.4 });
+        at(400);
+        await runtime.update({ multiplier: 0.4 });
+        // The delay expired, but the parent is still cold: the finer cut stays displayed.
+        expect(selected()).toEqual(["delay/root/0"]);
+        at(401);
+        await runtime.update({ multiplier: 0.4 });
+        expect(selected()).toEqual(["delay/root/0"]);
+
+        releaseRoot();
+        await settle();
+        at(410);
+        await runtime.update({ multiplier: 0.4 });
+        expect(selected()).toEqual(["delay/root"]);
         await runtime.dispose();
     });
 });

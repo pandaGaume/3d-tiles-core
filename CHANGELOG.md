@@ -9,6 +9,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 ### Changed
 
 - `coarseningDelayFrames` of `TileRuntime` becomes `coarseningDelayMilliseconds`, 300 by default: it starts again whenever the refinement is required, and asks for a frame when it expires, with a still camera too.
+- An expired coarsening delay stays recorded while the tile is still refining and its parent is not ready, instead of being forgotten: a path that keeps the finer cut displayed for a cold parent no longer starts a second delay, which re-requested the finer cut and cancelled the parent's load. On the `active` and `base` selections of this repository the tile already leaves its refining state at expiry, so their behaviour does not change; a test locks that a cold parent is selected as soon as it is ready. Ported from the excavation branch (`5422711`), where autonomous cuts keep the refining state.
 - The geometric error of a Web Mercator tile is the ground size of its largest cell at its latitude, instead of at the equator, which changes the tiles selected at one threshold.
 - `tile.refine` and `tile.coarsen` count what a frame changed. `tile.refine.attempt` and `tile.coarsen.attempt` count the passes of the balance, `cut.entered` and `cut.left` the tiles of the cut.
 

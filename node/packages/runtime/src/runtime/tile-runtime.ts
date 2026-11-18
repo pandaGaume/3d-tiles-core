@@ -1067,11 +1067,9 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         // A tile the last frames did not see, for example outside the view, starts again.
         const since = known && known.frame >= this.frame - 1 ? known.since : now;
         const expires = since + this.coarseningDelayMilliseconds;
-        if (now >= expires) {
-            this.coarseningSince.delete(node.id);
-            return false;
-        }
+        // An expired delay stays recorded: a cold parent keeps the finer cut displayed without starting a new delay.
         this.coarseningSince.set(node.id, { since, frame: this.frame });
+        if (now >= expires) return false;
         this.nextCoarseningAt = Math.min(this.nextCoarseningAt ?? expires, expires);
         return true;
     }
