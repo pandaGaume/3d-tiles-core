@@ -34,6 +34,8 @@ export interface IRuntimeContent<TContentHandle> {
     readyFrame: number;
     metadataHandle: MetadataHandle;
     featureMetadataHandle: MetadataHandle;
+    /** Invalidated: the handle stays presented until its reload replaces it. */
+    stale: boolean;
     readonly ready: boolean;
 }
 
@@ -48,6 +50,11 @@ export interface ITileContext<TSpatial> {
     spatial: TSpatial;
     implicitCoordinates?: IImplicitCoordinates;
 }
+
+/** Tiles whose loaded contents `TileRuntime.invalidate` marks as stale. */
+export type RuntimeTilePredicate<TSpatial, TContentHandle, TGlyphHandle> = (
+    tile: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+) => boolean;
 
 /** A selected tile displayed next to a tile two or more levels coarser, despite the quadtree balance. */
 export interface IRuntimeQuadtreeImbalance<TSpatial, TContentHandle, TGlyphHandle> {

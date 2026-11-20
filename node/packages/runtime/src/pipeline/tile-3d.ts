@@ -38,6 +38,11 @@ export class Tile3DContent<TRenderHandle> {
     public error?: unknown;
     public metadataHandle: MetadataHandle = NO_METADATA;
     public featureMetadataHandle: MetadataHandle = NO_METADATA;
+    /**
+     * Invalidated by `TileRuntime.invalidate`: the handle is still presented, and is replaced once its reload is
+     * ready.
+     */
+    public stale = false;
 
     public constructor(
         public readonly id: string,

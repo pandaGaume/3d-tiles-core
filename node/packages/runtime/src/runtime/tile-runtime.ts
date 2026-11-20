@@ -55,7 +55,14 @@ import type {
     RuntimeCacheEvictionReason,
 } from "./cache";
 import { resolveRuntimeCacheOptions } from "./cache";
-import type { IRuntimeContent, IRuntimeFrameResult, IRuntimeTile, IRuntimeTilesetDocument, ITileContext } from "./contracts";
+import type {
+    IRuntimeContent,
+    IRuntimeFrameResult,
+    IRuntimeTile,
+    IRuntimeTilesetDocument,
+    ITileContext,
+    RuntimeTilePredicate,
+} from "./contracts";
 import { RuntimeEventHub } from "./events";
 import type {
     HookResult,
@@ -185,6 +192,16 @@ interface ISubtreeCacheEntry<TSpatial, TContentHandle, TGlyphHandle> {
     users: Array<IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>;
 }
 
+/** Reload of a stale content, from its request to the swap of its handle. */
+interface IContentRefresh<TContentHandle> {
+    /** Invalidation the reload answers; a later one leaves the content stale. */
+    serial: number;
+    /** Reported result, swapped in at the start of the next frame. */
+    result?: ContentLoadResult<TContentHandle>;
+}
+
+type ReadyContent<TContentHandle> = IRuntimeContent<TContentHandle> & { handle: TContentHandle };
+
 export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHandle = unknown> {
     public readonly id: string;
     public readonly uri: string;
@@ -233,6 +250,10 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     private readonly scheduler: PriorityScheduler;
     private readonly lifecycleController = new AbortController();
     private readonly nodes = new Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>();
+    /** Latest invalidation of each stale content, and the failed reloads since. */
+    private readonly staleContents = new Map<IRuntimeContent<TContentHandle>, { serial: number; failures: number }>();
+    private readonly refreshes = new Map<IRuntimeContent<TContentHandle>, IContentRefresh<TContentHandle>>();
+    private invalidations = 0;
     private readonly refiningNodes = new Set<string>();
     private readonly replacementFrontNodes = new Set<string>();
     private readonly activeThisFrame = new Set<string>();
@@ -345,6 +366,46 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         return operation;
     }
 
+    /**
+     * Marks the loaded contents of the tiles a predicate selects as stale, such as the tiles whose region crosses an
+     * area whose data changed, and reloads them. Each keeps its current handle presented until its reload is ready:
+     * the swap happens between two frames, so the view never shows a hole. Stale contents reload while their tile is
+     * in the working set; the others reload when it comes back, and meanwhile still serve as they are.
+     *
+     * The reload goes through the activation adapter, with `refresh` set, or through the legacy content adapter.
+     *
+     * @returns The number of tiles invalidated.
+     */
+    public invalidate(predicate: RuntimeTilePredicate<TSpatial, TContentHandle, TGlyphHandle>): Promise<number> {
+        const operation = this.updateChain.then(() => {
+            if (this.disposed) return 0;
+            const serial = ++this.invalidations;
+            let tiles = 0;
+            for (const node of this.nodes.values()) {
+                // A content still loading may read the data from before the invalidation: it reloads once ready.
+                const contents = node.contents.filter(
+                    (content) =>
+                        (content.kind === TileContentKind.Unknown || content.kind === TileContentKind.Renderable) &&
+                        (content.status === TileReadinessState.Ready || content.status === TileReadinessState.Preparing),
+                );
+                if (contents.length === 0 || !predicate(node)) continue;
+                tiles++;
+                for (const content of contents) {
+                    content.stale = true;
+                    this.staleContents.set(content, { serial, failures: 0 });
+                    this.events.emit({ type: "content-state", tile: node, content });
+                }
+            }
+            if (tiles > 0) this.markDirty();
+            return tiles;
+        });
+        this.updateChain = operation.then(
+            () => undefined,
+            () => undefined,
+        );
+        return operation;
+    }
+
     public async start(): Promise<void> {
         if (this.disposed) throw new Error("The runtime has been disposed.");
         if (this.startPromise) return this.startPromise;
@@ -426,6 +487,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         const selected = [...this.nodes.values()].filter((node) => node.selected).sort((left, right) => right.depth - left.depth);
         for (const node of selected) await this.deactivateNode(node);
         for (const node of [...this.nodes.values()].sort((left, right) => right.depth - left.depth)) await this.disposeNodeContent(node);
+        this.refreshes.clear();
+        this.staleContents.clear();
         this.nodes.clear();
         this.refiningNodes.clear();
         this.coarseningSince.clear();
@@ -455,6 +518,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             camera,
         };
         await this.invokeHooks("beforeFrame", (hook) => hook.beforeFrame?.(beforeContext));
+        await this.applyRefreshes();
 
         const desired = new Map<string, IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>>();
         const requested: IRuntimeContent<TContentHandle>[] = [];
@@ -1369,6 +1433,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             if (node.contents.some((content) => content.status === TileReadinessState.Queued))
                 this.followQueuedPriority(this.pipelineActivationKey(node), priority);
             this.requestPipelineActivation(node, priority, requested, entering);
+            this.requestRefresh(node, priority);
             return;
         }
 
@@ -1390,6 +1455,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             }
         }
         this.refreshNodeReadiness(node);
+        this.requestRefresh(node, priority);
     }
 
     /** A waiting load follows the priority of the current frame, up or down: the highest its balance passes asked. */
@@ -1541,6 +1607,242 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         }
     }
 
+    private refreshKey(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): string {
+        return `refresh:${node.id}`;
+    }
+
+    /** Reloads the stale ready contents of a tile of the working set, one reload of a tile at a time. */
+    private requestRefresh(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>, priority: number): void {
+        const stale = node.contents.filter(
+            (content): content is ReadyContent<TContentHandle> => content.stale && content.ready && !this.refreshes.has(content),
+        );
+        if (stale.length === 0) return;
+        const records = stale.map((content) => ({ content, refresh: { serial: this.staleContents.get(content)?.serial ?? 0 } }));
+        // Recorded first: the scheduler may start the reload at once, and an adapter may settle it synchronously.
+        for (const { content, refresh } of records) this.refreshes.set(content, refresh);
+        const added = this.scheduler.enqueue(this.refreshKey(node), priority, (signal) =>
+            this.refreshTile(node, records, priority, signal),
+        );
+        if (!added) for (const { content } of records) this.refreshes.delete(content);
+    }
+
+    /** Stops the reloads of a tile leaving the working set; the results already reported are still swapped in. */
+    private cancelRefresh(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): void {
+        this.scheduler.cancel(this.refreshKey(node));
+        for (const content of node.contents) {
+            const refresh = this.refreshes.get(content);
+            if (refresh && !refresh.result) this.refreshes.delete(content);
+        }
+    }
+
+    private async refreshTile(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        records: readonly { content: ReadyContent<TContentHandle>; refresh: IContentRefresh<TContentHandle> }[],
+        priority: number,
+        signal: AbortSignal,
+    ): Promise<void> {
+        const unsettled = new Set(records.map(({ content }) => content.id));
+        // A record replaced or dropped since, by an eviction or a deactivation, ignores what the adapter reports.
+        const current = (contentId: string): (typeof records)[number] | undefined => {
+            const record = records.find(({ content }) => content.id === contentId);
+            return record && unsettled.has(contentId) && this.refreshes.get(record.content) === record.refresh ? record : undefined;
+        };
+        const settle = (contentId: string, record: (typeof records)[number] | undefined, keep: boolean): void => {
+            unsettled.delete(contentId);
+            if (record && !keep) this.refreshes.delete(record.content);
+            this.markDirty();
+        };
+        const readiness: ITileReadinessPort<TContentHandle> = {
+            tileId: node.id,
+            activationId: node.activationId,
+            signal,
+            ready: async (contentId, result) => {
+                const record = current(contentId);
+                if (!record || signal.aborted) return false;
+                record.refresh.result = result;
+                settle(contentId, record, true);
+                return true;
+            },
+            failed: async (contentId, error) => {
+                const record = current(contentId);
+                if (!record) return;
+                settle(contentId, record, false);
+                // The previous handle stays presented; after too many failures, it is kept as it is.
+                const stale = this.staleContents.get(record.content);
+                if (stale && ++stale.failures >= this.maxLoadAttempts) this.markFresh(record.content, stale.serial);
+                await this.reportError("content.refresh", error, node, record.content);
+            },
+            cancelled: async (contentId) => {
+                if (unsettled.has(contentId)) settle(contentId, current(contentId), false);
+            },
+        };
+        const abort = (): void => {
+            for (const contentId of [...unsettled]) void readiness.cancelled(contentId);
+        };
+        signal.addEventListener("abort", abort, { once: true });
+        try {
+            const activation = this.adapter.activation;
+            if (activation) {
+                await activation.activate({
+                    runtimeId: this.id,
+                    tile: node,
+                    pendingContents: records.map(({ content }) => content),
+                    priority,
+                    activationId: node.activationId,
+                    signal,
+                    readiness,
+                    refresh: true,
+                });
+            } else {
+                const contentAdapter = this.adapter.content;
+                if (!contentAdapter) throw new Error("The legacy content adapter is not configured.");
+                for (const { content } of records) {
+                    if (signal.aborted) break;
+                    try {
+                        const result = await contentAdapter.load(this.contentLoadContext(node, content), signal);
+                        const accepted = await readiness.ready(content.id, result);
+                        if (!accepted && result.kind === "renderable" && result.handle !== content.handle)
+                            await this.releaseHandle(node, content, result.handle);
+                    } catch (error) {
+                        if (signal.aborted) await readiness.cancelled(content.id);
+                        else await readiness.failed(content.id, error);
+                    }
+                }
+            }
+        } catch (error) {
+            for (const contentId of [...unsettled]) await readiness.failed(contentId, error);
+        } finally {
+            signal.removeEventListener("abort", abort);
+            // What the adapter left unsettled counts as a failed reload, so that an adapter ignoring reloads ends them.
+            for (const contentId of [...unsettled]) {
+                if (signal.aborted) await readiness.cancelled(contentId);
+                else await readiness.failed(contentId, new Error("The activation adapter settled no reload of this content."));
+            }
+        }
+    }
+
+    /** Clears the stale flag, unless the content was invalidated again after its reload started. */
+    private markFresh(content: IRuntimeContent<TContentHandle>, serial: number): void {
+        const stale = this.staleContents.get(content);
+        if (stale && stale.serial > serial) return;
+        this.staleContents.delete(content);
+        content.stale = false;
+    }
+
+    /** Swaps the reloaded handles in, before the traversal of a frame. */
+    private async applyRefreshes(): Promise<void> {
+        if (this.refreshes.size === 0) return;
+        for (const node of this.nodes.values()) {
+            for (const content of node.contents) {
+                const refresh = this.refreshes.get(content);
+                if (!refresh?.result) continue;
+                this.refreshes.delete(content);
+                await this.swapContent(node, content, refresh.result, refresh.serial);
+            }
+        }
+    }
+
+    /**
+     * Replaces the handle of a content with its reload. A presented content is hidden and released, then the tile is
+     * presented again with the new handle, all before the next render: the view never shows a hole.
+     */
+    private async swapContent(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        content: IRuntimeContent<TContentHandle>,
+        result: ContentLoadResult<TContentHandle>,
+        serial: number,
+    ): Promise<void> {
+        const previous = content.handle;
+        if (previous === undefined || !content.ready) {
+            // Released in the meantime: nothing to replace.
+            if (result.kind === "renderable" && result.handle !== previous) await this.releaseHandle(node, content, result.handle);
+            return;
+        }
+        this.markFresh(content, serial);
+        content.lastTouchedFrame = this.frame;
+        if (result.kind !== "renderable") {
+            await this.reportError("content.refresh", new Error("A reloaded content must stay renderable."), node, content);
+            return;
+        }
+        if (result.handle === previous) {
+            // Refreshed in place by the adapter.
+            this.events.emit({ type: "content-state", tile: node, content });
+            return;
+        }
+        const presented = content.attached && node.selected;
+        const old = content as ReadyContent<TContentHandle>;
+        const presentation = this.adapter.presentation;
+        const contentAdapter = this.adapter.content;
+        try {
+            if (presented) {
+                if (presentation) await presentation.hide(this.pipelinePresentationContext(node, [old]));
+                else await contentAdapter?.detach(this.presentationContext(node, old, await this.contentSnapshot(node, old)));
+            }
+        } catch (error) {
+            await this.reportError("content.hide", error, node, content);
+        }
+        await this.releaseHandle(node, content, previous);
+        content.attached = false;
+        this.metadataStore.release(content.metadataHandle);
+        if (content.featureMetadataHandle !== content.metadataHandle) this.metadataStore.release(content.featureMetadataHandle);
+        content.metadataHandle = NO_METADATA;
+        content.featureMetadataHandle = NO_METADATA;
+        node.metadataSnapshots = node.metadataSnapshots.filter((snapshot) => snapshot.content !== content.descriptor);
+        await this.acceptContentResult(node, content, result);
+        content.readyFrame = this.frame;
+        this.events.emit({ type: "content-state", tile: node, content });
+        if (!presented) return;
+        const fresh = content as ReadyContent<TContentHandle>;
+        try {
+            const snapshot = await this.resolveMetadata(node, fresh.descriptor, fresh.featureMetadata);
+            node.metadataSnapshots = [...node.metadataSnapshots, snapshot];
+            if (presentation) {
+                const ready = node.contents.filter((candidate): candidate is ReadyContent<TContentHandle> => candidate.ready);
+                await presentation.present(this.pipelinePresentationContext(node, ready));
+                for (const candidate of ready) candidate.attached = true;
+            } else if (contentAdapter) {
+                await contentAdapter.attach(this.presentationContext(node, fresh, snapshot));
+                fresh.attached = true;
+            }
+        } catch (error) {
+            await this.reportError("content.present", error, node, content);
+        }
+    }
+
+    /** Releases a handle of a content that is not, or no longer, its current handle. */
+    private async releaseHandle(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        content: IRuntimeContent<TContentHandle>,
+        handle: TContentHandle,
+    ): Promise<void> {
+        const presentation = this.adapter.presentation;
+        const contentAdapter = this.adapter.content;
+        const resource: ReadyContent<TContentHandle> = Object.assign(
+            Object.create(Object.getPrototypeOf(content) as object) as object,
+            content,
+            {
+                handle,
+            },
+        );
+        try {
+            if (presentation?.release) await presentation.release(this.pipelinePresentationContext(node, [resource]));
+            else if (contentAdapter?.dispose)
+                await contentAdapter.dispose(this.presentationContext(node, resource, await this.contentSnapshot(node, resource)));
+        } catch (error) {
+            await this.reportError("content.dispose", error, node, content);
+        }
+    }
+
+    private async contentSnapshot(
+        node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
+        content: IRuntimeContent<TContentHandle>,
+    ): Promise<IMetadataSnapshot> {
+        return (
+            node.metadataSnapshots.find((candidate) => candidate.content === content.descriptor) ??
+            (await this.resolveMetadata(node, content.descriptor))
+        );
+    }
+
     private pipelineActivationKey(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): string {
         return `activation:${node.id}`;
     }
@@ -1552,6 +1854,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             node.activationId++;
             node.selectionState = TileSelectionState.Inactive;
             this.scheduler.cancel(this.pipelineActivationKey(node));
+            this.cancelRefresh(node);
             // An activation that left the queue before it started never settles its contents: they become idle again.
             let requeue = false;
             for (const content of node.contents) {
@@ -2844,6 +3147,14 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>,
         content: IRuntimeContent<TContentHandle> & { handle: TContentHandle },
     ): Promise<void> {
+        // A released content loads afresh: its pending reload is dropped.
+        const refresh = this.refreshes.get(content);
+        this.refreshes.delete(content);
+        this.staleContents.delete(content);
+        content.stale = false;
+        if (refresh?.result?.kind === "renderable" && refresh.result.handle !== content.handle) {
+            await this.releaseHandle(node, content, refresh.result.handle);
+        }
         try {
             const presentationAdapter = this.adapter.presentation;
             const contentAdapter = this.adapter.content;

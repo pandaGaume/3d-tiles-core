@@ -6,6 +6,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Added
+
+- `TileRuntime.invalidate(predicate)` reloads the loaded contents of the tiles a predicate selects without a hole: each stale content (`IRuntimeContent.stale`) stays presented until its reload, requested with `ITileActivationContext.refresh`, replaces it between two frames, or is reported refreshed in place.
+
 ### Changed
 
 - `coarseningDelayFrames` of `TileRuntime` becomes `coarseningDelayMilliseconds`, 300 by default: it starts again whenever the refinement is required, and asks for a frame when it expires, with a still camera too.

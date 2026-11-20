@@ -21,6 +21,13 @@ export interface ITileActivationContext<TSpatial, TRenderHandle, TGlyphHandle> {
     activationId: number;
     signal: AbortSignal;
     readiness: ITileReadinessPort<TRenderHandle>;
+    /**
+     * True when the contents are ready, possibly presented, and were invalidated by `TileRuntime.invalidate`: each
+     * keeps its current `handle` while it reloads. Report a new handle, which replaces the old one between two frames,
+     * or the same handle once the adapter refreshed it in place. An adapter that does not support refreshing reports
+     * the same handle at once.
+     */
+    refresh?: boolean;
 }
 
 export interface ITileDeactivationContext<TSpatial, TRenderHandle, TGlyphHandle> {

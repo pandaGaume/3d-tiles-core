@@ -43,6 +43,8 @@ New renderer integrations can replace the legacy combined content adapter with t
 - `ITileActivationAdapter` is notified when camera selection activates or deactivates a tile. Its readiness port returns each prepared resource to the runtime.
 - `ITilePresentationAdapter` presents, hides and releases ready opaque renderer handles.
 
+`invalidate(predicate)` marks the loaded contents of the tiles a predicate selects as stale, for example the tiles whose region crosses an area whose data changed, and reloads them while their tile is in the working set. The activation adapter receives them with `refresh: true` and their current `handle`. It reports a new handle, which replaces the old one at the start of the next frame (hide, release, then present, before any render), or the same handle once it refreshed it in place. The stale handle stays presented until then: the view never shows a hole. A failed reload keeps the old handle.
+
 `Tile3D` stores selection, readiness, presentation and metadata states as numeric enums. Metadata is addressed with compact numeric handles, with `NO_METADATA = -1`. Applications push immutable camera frames and their frustum with `onCameraChanged`, then call `processFrame`.
 
 The implicit geodesic grid example of [3d-tiles-babylon](https://github.com/pandaGaume/3d-tiles-babylon) proves the boundary without using the legacy content adapter. Babylon shares only normalized grid topology, then creates unique ECEF geometry for selected implicit tiles using their geographic regions and WGS84. The same boundary allows a later shader implementation to project instanced topology on the GPU.
