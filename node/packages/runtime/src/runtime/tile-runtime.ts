@@ -101,6 +101,15 @@ export interface ITileRuntimeOptions<TCamera, TSpatial, TContentHandle, TGlyphHa
      * retained for integrations not yet migrated. Defaults to active.
      */
     selectionStrategy?: "base" | "active";
+    /**
+     * How a tile with nothing to present refines. With "always", such a tile is a structural node: it refines whatever its
+     * screen-space error. With "geometric-error", its geometric error applies, as 3D Tiles 1.1 does for every tile: an
+     * explicit tile whose contents are all known empty and ready, a tile without content included, refines only when its
+     * screen-space error requires it. Otherwise it presents nothing, its descendants are not loaded, and under REPLACE it
+     * still completes the replacement of its parent. A tile with an external tileset, with a content not loaded yet, or an
+     * implicit tile always refines. Defaults to "always".
+     */
+    emptyTileRefinement?: "always" | "geometric-error";
     maxScreenSpaceError?: number;
     maxScreenSpaceErrorForDepth?: (depth: number, defaultValue: number) => number;
     /**
@@ -211,6 +220,7 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
     public readonly metadataStore = new RuntimeMetadataStore();
 
     private readonly selectionStrategy: "base" | "active";
+    private readonly emptyTileRefinement: "always" | "geometric-error";
     private readonly maxScreenSpaceError: number;
     private readonly maxScreenSpaceErrorForDepth: ((depth: number, defaultValue: number) => number) | undefined;
     private readonly refinementHysteresisRatio: number;
@@ -291,6 +301,9 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         }
         this.selectionStrategy = options.selectionStrategy ?? "active";
         if (this.selectionStrategy !== "base" && this.selectionStrategy !== "active") throw new RangeError("Unknown selection strategy.");
+        this.emptyTileRefinement = options.emptyTileRefinement ?? "always";
+        if (this.emptyTileRefinement !== "always" && this.emptyTileRefinement !== "geometric-error")
+            throw new RangeError("Unknown empty tile refinement.");
         this.maxScreenSpaceError = options.maxScreenSpaceError ?? 16;
         this.maxScreenSpaceErrorForDepth = options.maxScreenSpaceErrorForDepth;
         this.refinementHysteresisRatio = options.refinementHysteresisRatio ?? 0.1;
@@ -640,18 +653,16 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             this.selectBaseCoverage(node, camera, desired, requested);
             return;
         }
-        const threshold = this.maxScreenSpaceErrorForDepth?.(node.depth, this.maxScreenSpaceError) ?? this.maxScreenSpaceError;
         const wasRefining = this.refiningNodes.has(node.id);
-        const effective = wasRefining
-            ? threshold * (1 - this.refinementHysteresisRatio)
-            : threshold * Math.max(1, this.refinementThresholdScale?.() ?? 1);
-        const required = !potential || node.screenSpaceError > effective || this.isBalanceRefinementRequired(node);
+        const effective = this.refinementThreshold(node, wasRefining);
+        const required =
+            (!potential && !this.obeysGeometricError(node)) || node.screenSpaceError > effective || this.isBalanceRefinementRequired(node);
         const delayed = this.isCoarseningDelayed(node, wasRefining, required);
         if (required || delayed) this.materializeImplicitChildren(node);
         const refining = (required || delayed) && node.children.length > 0;
         this.setRefinementState(node, refining);
         if (!refining) {
-            // A known empty leaf is an empty part of the replacement, not missing coverage.
+            // A known empty leaf, or a known empty tile under its threshold, is an empty part of the replacement, not missing coverage.
             if (!potential) return;
             this.selectBaseCoverage(node, camera, desired, requested);
             return;
@@ -696,7 +707,11 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             return;
         }
         const threshold = this.maxScreenSpaceErrorForDepth?.(node.depth, this.maxScreenSpaceError) ?? this.maxScreenSpaceError;
-        if (potential && node.screenSpaceError <= threshold * Math.max(1, this.refinementThresholdScale?.() ?? 1)) return;
+        if (
+            (potential || this.obeysGeometricError(node)) &&
+            node.screenSpaceError <= threshold * Math.max(1, this.refinementThresholdScale?.() ?? 1)
+        )
+            return;
         this.materializeImplicitChildren(node);
         for (const child of node.children) this.preloadBasePeriphery(child, camera, requested);
     }
@@ -734,6 +749,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             this.requestNodeContents(node, priority, requested);
             return this.isNodePresentationReady(node);
         }
+        // A known empty tile that its error does not refine presents nothing: it completes the front as it is.
+        if (this.isSatisfiedEmpty(node)) return true;
         // Empty structural nodes are not content: resolve their first available content front.
         this.materializeImplicitChildren(node);
         return node.children.map((child) => this.collectBaseReplacementFront(child, camera, requested, priority)).every(Boolean);
@@ -802,6 +819,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             this.selectBaseTile(node, desired, requested);
             return;
         }
+        // A known empty tile that obeys its error covers its place with nothing, as before it refined: its parent stays replaced.
+        if (this.obeysGeometricError(node)) return;
         for (let parent = node.parent; parent; parent = parent.parent) {
             if (parent.refinementMode === TileRefinementMode.Add) break;
             if (!this.isNodePresentationReady(parent)) continue;
@@ -974,17 +993,17 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             this.selectNode(node, desired, requested);
             return;
         }
-        const threshold = this.maxScreenSpaceErrorForDepth?.(node.depth, this.maxScreenSpaceError) ?? this.maxScreenSpaceError;
         const hasPotentialPresentation = node.contents.some(
             (content) => content.kind === TileContentKind.Unknown || content.kind === TileContentKind.Renderable,
         );
         const wasRefining = this.refiningNodes.has(node.id);
-        const effectiveThreshold = wasRefining
-            ? threshold * (1 - this.refinementHysteresisRatio)
-            : threshold * Math.max(1, this.refinementThresholdScale?.() ?? 1);
+        const effectiveThreshold = this.refinementThreshold(node, wasRefining);
         const balanceRequested = this.isBalanceRefinementRequired(node);
         const held = hasPotentialPresentation && this.balanceHolds.has(node.id);
-        const required = node.screenSpaceError > effectiveThreshold || !hasPotentialPresentation || balanceRequested;
+        const required =
+            node.screenSpaceError > effectiveThreshold ||
+            (!hasPotentialPresentation && !this.obeysGeometricError(node)) ||
+            balanceRequested;
         // Always evaluated: a required refinement also starts the delay again.
         const coarseningDelayed = this.isCoarseningDelayed(node, wasRefining, required);
         const refinementRequested = !held && (required || coarseningDelayed);
@@ -1041,7 +1060,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             // A ready ancestor provides complete coverage for every visible
             // child branch. Previously selected descendants are retained only
             // when no such ancestor is currently available.
-            if (this.selectReadyCoverageAncestor(node, desired, requested)) return;
+            // A known empty tile that obeys its error covers its place with nothing, as before it refined: its parent stays replaced.
+            if (!this.obeysGeometricError(node) && this.selectReadyCoverageAncestor(node, desired, requested)) return;
             if (this.stableReplacementCut && this.retainVisibleSelectedDescendants(node, camera, desired)) return;
             this.selectNode(node, desired, requested);
         }
@@ -1080,6 +1100,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
             this.requestNodeContents(node, priority, requested);
             return potential.every((content) => content.kind === TileContentKind.Renderable && content.status === TileReadinessState.Ready);
         }
+        // A known empty tile that its error does not refine presents nothing: it completes the front as it is.
+        if (this.isSatisfiedEmpty(node)) return true;
         // Only a tile without content needs its children for the front: others would create a level nothing asked for.
         this.materializeImplicitChildren(node);
         if (node.children.length === 0) return true;
@@ -1114,6 +1136,35 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
         if (potential.length === 0) return;
         for (const content of potential) content.lastTouchedFrame = this.frame;
         this.requestNodeContents(node, priority, requested);
+    }
+
+    /** Screen-space error above which a tile refines: lowered by the hysteresis once refined, scaled by the factor before. */
+    private refinementThreshold(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>, wasRefining: boolean): number {
+        const threshold = this.maxScreenSpaceErrorForDepth?.(node.depth, this.maxScreenSpaceError) ?? this.maxScreenSpaceError;
+        return wasRefining
+            ? threshold * (1 - this.refinementHysteresisRatio)
+            : threshold * Math.max(1, this.refinementThresholdScale?.() ?? 1);
+    }
+
+    /**
+     * Whether a tile is explicit and every content it has, if any, is known empty and ready. A tile with an external
+     * tileset, with a content not loaded yet, or an implicit tile is not.
+     */
+    private isKnownEmpty(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): boolean {
+        return (
+            !node.implicit &&
+            node.contents.every((content) => content.kind === TileContentKind.Empty && content.status === TileReadinessState.Ready)
+        );
+    }
+
+    /** Whether a tile with nothing to present refines by its screen-space error, see `emptyTileRefinement`. */
+    private obeysGeometricError(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): boolean {
+        return this.emptyTileRefinement === "geometric-error" && this.isKnownEmpty(node);
+    }
+
+    /** Whether a known empty tile that obeys its error stays under its threshold, with its error of the current frame. */
+    private isSatisfiedEmpty(node: IRuntimeTile<TSpatial, TContentHandle, TGlyphHandle>): boolean {
+        return this.obeysGeometricError(node) && node.screenSpaceError <= this.refinementThreshold(node, this.refiningNodes.has(node.id));
     }
 
     /** Whether a refined tile that no longer requires its refinement still waits before coarsening. */
@@ -1329,6 +1380,8 @@ export class TileRuntime<TCamera, TSpatial, TContentHandle = unknown, TGlyphHand
                 // An available empty leaf intentionally contributes no geometry to the retained replacement cut.
                 return true;
             }
+            // So does a known empty tile that its error did not refine.
+            if (this.obeysGeometricError(tile) && !this.refiningNodes.has(tile.id)) return true;
             return tile.children.length > 0 && tile.children.every(covered);
         };
         return node.children.length > 0 && node.children.every(covered);

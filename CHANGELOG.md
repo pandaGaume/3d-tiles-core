@@ -9,6 +9,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 ### Added
 
 - `TileRuntime.invalidate(predicate)` reloads the loaded contents of the tiles a predicate selects without a hole: each stale content (`IRuntimeContent.stale`) stays presented until its reload, requested with `ITileActivationContext.refresh`, replaces it between two frames, or is reported refreshed in place.
+- `emptyTileRefinement` of `TileRuntime`, `"always"` by default: with `"geometric-error"`, an explicit tile whose contents are all known empty, a tile without content included, refines by its screen-space error as 3D Tiles 1.1 specifies, instead of always; under its threshold it presents nothing, its descendants do not load, and it still completes the replacement of its parent. External tilesets, contents not loaded yet and implicit tiles still always refine.
 
 ### Changed
 
